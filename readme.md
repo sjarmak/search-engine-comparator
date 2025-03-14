@@ -1,4 +1,4 @@
-# Academic Search Results Comparator
+# Academic Search Results Comparison Tool
 
 A web-based tool for comparing search result similarities across multiple academic search indexers, including SciX, Google Scholar, Web of Science, and Semantic Scholar.
 
