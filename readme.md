@@ -23,7 +23,7 @@ cd search-engine-comparator
 chmod +x startup.sh
 ./startup.sh
 ```
-If you do not already have a .env file setup in the backend folder then prior to running ./startup.sh you will need to:
+If you do not already have a .env file setup in the backend folder then prior to carrying out search engine comparisons requiring API keys (ADS/SciX, WoS) you will need to:
 
 ```
 cd backend
