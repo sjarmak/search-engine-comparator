@@ -15,12 +15,21 @@ NOTE: Web of Science is not yet configured in the current code.
 
 ## Quick Setup
 
-For a streamlined setup experience, you can use the included startup script:
+For a streamlined setup experience, you can use the included startup script. Run the following commands, 
 
 ```bash
+git clone https://github.com/sjarmak/search-engine-comparator.git
+cd search-engine-comparator
 chmod +x startup.sh
 ./startup.sh
 ```
+If you do not already have a .env file setup in the backend folder then prior to running ./startup.sh you will need to:
+
+```
+cd backend
+nano .env
+```
+And then add your API keys to the environment file and ctrl+X to save and exit. Then cd back to the root directory and run ./startup.sh
 
 This script will automatically:
 - Check prerequisites
