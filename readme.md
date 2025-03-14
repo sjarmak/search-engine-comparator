@@ -13,10 +13,35 @@ NOTE: Web of Science is not yet configured in the current code.
 - **Flexible Metadata Comparison**: Configure which metadata fields to consider in comparisons
 - **Detailed Analysis**: View comprehensive tables and charts of comparison results
 
+## Quick Setup
+
+For a streamlined setup experience, you can use the included startup script:
+
+```bash
+chmod +x startup.sh
+./startup.sh
+```
+
+This script will automatically:
+- Check prerequisites
+- Create and activate a Python virtual environment
+- Install backend and frontend dependencies
+- Create a template .env file if one doesn't exist
+- Apply SSL certificate fixes for macOS users
+- Start both the backend and frontend servers
+
+After running the script, the application will be available at:
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8000
+- API Documentation: http://localhost:8000/docs
+
+Press Ctrl+C in the terminal running the script to stop both services.
+
 ## Project Structure
 
 ```
 academic-search-comparator/
+├── startup.sh               # Automated setup and startup script
 ├── frontend/                # React frontend
 │   ├── public/
 │   ├── src/
@@ -36,7 +61,9 @@ academic-search-comparator/
     └── requirements.txt    # Backend dependencies
 ```
 
-## Setup Instructions
+### Manual Setup
+
+If you prefer to set up each component manually, or if you encounter issues with the startup script, follow these instructions:
 
 ### Prerequisites
 
@@ -122,6 +149,14 @@ npm start
 The application should now be running at `http://localhost:3000`.
 
 ## Troubleshooting
+
+### Startup Script Issues
+If you encounter issues with the startup script:
+
+1. Check that you have the necessary permissions to execute the script
+2. Try running the script with bash explicitly: `bash startup.sh`
+3. Verify that both frontend and backend directories exist in the same folder as the script
+4. Follow the manual setup instructions as an alternative
 
 ### SSL Certificate Issues on macOS
 If you encounter SSL certificate verification errors on macOS:
