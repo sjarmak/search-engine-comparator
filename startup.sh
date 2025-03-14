@@ -96,10 +96,18 @@ else
 fi
 backend_pid=$!
 
-# Start frontend
+# Start frontend with port check
 cd ../frontend
 echo "Starting frontend server..."
-npm start &
+# Check if port 3000 is in use
+if lsof -Pi :3000 -sTCP:LISTEN -t >/dev/null ; then
+    echo "Port 3000 is already in use. Starting on port 3001 instead..."
+    PORT=3001 npm start &
+    echo "- Frontend: http://localhost:3001"
+else
+    npm start &
+    echo "- Frontend: http://localhost:3000"
+fi
 frontend_pid=$!
 
 echo "Both services have been started:"
@@ -110,7 +118,7 @@ echo ""
 echo "Press Ctrl+C to stop both services."
 
 # Setup trap to kill both processes on exit
-trap "kill $backend_pid $frontend_pid; exit" INT TERM EXIT
+trap "kill \$(ps -p $backend_pid -o pid= 2>/dev/null) \$(ps -p $frontend_pid -o pid= 2>/dev/null) 2>/dev/null; exit" INT TERM EXIT
 
 # Wait for any process to exit
 wait
