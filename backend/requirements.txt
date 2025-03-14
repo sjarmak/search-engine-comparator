@@ -1,0 +1,10 @@
+fastapi==0.100.0
+uvicorn==0.23.1
+httpx==0.24.1
+pydantic==2.1.1
+python-dotenv==1.0.0
+scholarly==1.7.11
+beautifulsoup4==4.12.2
+nltk==3.8.1
+python-multipart==0.0.6
+asyncio==3.4.3
