@@ -2,6 +2,8 @@
 
 A web-based tool for comparing search result similarities across multiple academic search indexers, including SciX, Google Scholar, Web of Science, and Semantic Scholar.
 
+NOTE: Only ADS/SciX and Google Scholar are currently configured in the current code. 
+
 ## Features
 
 - **Multi-Source Search**: Query multiple academic search engines simultaneously
