@@ -51,7 +51,6 @@ if [ ! -f ".env" ]; then
     cat > .env << EOL
 # Add your API keys below
 ADS_API_KEY=your_ads_api_key
-SEMANTIC_SCHOLAR_API_KEY=your_semantic_scholar_api_key
 WOS_API_KEY=your_wos_api_key
 EOL
     echo "Created .env file. Please edit it to add your API keys."
