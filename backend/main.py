@@ -119,7 +119,7 @@ app.add_middleware(
 # API Constants
 ADS_API_URL = "https://api.adsabs.harvard.edu/v1/search/query"
 SEMANTIC_SCHOLAR_API_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
-WOS_API_URL = "https://wos-api.clarivate.com/api/wos"  # Example URL, may need adjustment
+WOS_API_URL = "https://api.clarivate.com/apis/wos-starter/v1/"
 NUM_RESULTS = 20
 TIMEOUT_SECONDS = 60  # Increased from 30 to 60
 
@@ -467,7 +467,6 @@ async def get_ads_results(query: str, fields: List[str], num_results: int = NUM_
         "rows": num_results,
         "fl": "title,author,abstract,doi,year,bibcode",
         "sort": "score desc",  # Changed from "date desc" to "score desc"
-        "fq": "database:astronomy"  # Optional: restrict to astronomy database
     }
     
     logger.info(f"Making ADS API request with params: {params}")
@@ -790,8 +789,7 @@ async def get_scholar_results_fallback(query: str, num_results: int = 10) -> Lis
             logger.error(f"Google Scholar fallback failed with status {response.status_code}")
             return []
             
-        #
-# Parse the HTML
+        # Parse the HTML
         soup = BeautifulSoup(response.text, 'html.parser')
         articles = soup.find_all('div', class_='gs_ri')
         
@@ -864,7 +862,7 @@ async def get_scholar_results_fallback(query: str, num_results: int = 10) -> Lis
 
 async def get_semantic_scholar_results(query: str, fields: List[str], num_results: int = NUM_RESULTS) -> List[SearchResult]:
     """
-    Get results from Semantic Scholar with caching.
+    Get results from Semantic Scholar API with caching and rate limit handling.
     
     Args:
         query: Search query string
@@ -879,64 +877,144 @@ async def get_semantic_scholar_results(query: str, fields: List[str], num_result
     cached_results = load_from_cache(cache_key)
     
     if cached_results is not None:
+        logger.info(f"Retrieved {len(cached_results)} Semantic Scholar results from cache")
         return cached_results
     
-    headers = {}
-    if SEMANTIC_SCHOLAR_API_KEY:
-        headers["x-api-key"] = SEMANTIC_SCHOLAR_API_KEY
+    base_url = "https://api.semanticscholar.org/graph/v1/paper/search"
     
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                SEMANTIC_SCHOLAR_API_URL,
-                headers=headers,
-                params={"query": query, "limit": num_results}
-            )
+    # Try with API key if available
+    api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "")
+    headers = {"x-api-key": api_key} if api_key else {}
+    
+    params = {
+        "query": query,
+        "limit": num_results,
+        "fields": "title,authors,abstract,year,externalIds,url"
+    }
+    
+    # Implement progressive backoff for retries
+    max_retries = 5
+    base_delay = 2  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            # Add delay on retries - exponential backoff
+            if attempt > 0:
+                retry_delay = base_delay * (2 ** (attempt - 1))  # 2, 4, 8, 16...
+                logger.info(f"Semantic Scholar retry {attempt}/{max_retries}, waiting {retry_delay}s")
+                await asyncio.sleep(retry_delay)
             
-        if response.status_code != 200:
-            logger.error(f"Error fetching from Semantic Scholar. Status: {response.status_code}")
-            return []
+            logger.info(f"Making Semantic Scholar API request (attempt {attempt+1}/{max_retries})")
             
-        data = response.json()
-        papers = data.get('data', [])
-        
-        search_results = []
-        for i, paper in enumerate(papers):
-            result = SearchResult(
-                title=paper.get('title', ''),
-                source="semanticScholar",
-                rank=i + 1
-            )
-            
-            if "authors" in fields and 'authors' in paper:
-                result.authors = [author.get('name', '') for author in paper['authors'][:3]]
+            async with httpx.AsyncClient() as client:
+                response = await safe_api_request(
+                    client,
+                    "GET",
+                    base_url,
+                    headers=headers,
+                    params=params
+                )
                 
-            if "abstract" in fields:
-                result.abstract = paper.get('abstract', '')
+            if not response:
+                logger.error("No response from Semantic Scholar API")
+                continue  # Try again
                 
-            if "doi" in fields:
-                result.doi = paper.get('doi', '')
+            if response.status_code == 429:
+                logger.warning("Semantic Scholar rate limit exceeded, will retry with backoff")
+                # Extract retry-after header if available
+                retry_after = response.headers.get("retry-after")
+                if retry_after and retry_after.isdigit():
+                    wait_time = int(retry_after) + 1  # Add 1 second buffer
+                    logger.info(f"Semantic Scholar API requested wait time: {wait_time}s")
+                    await asyncio.sleep(wait_time)
+                continue  # Try again after waiting
                 
-            if "year" in fields:
-                result.year = paper.get('year')
+            if response.status_code != 200:
+                logger.error(f"Error fetching from Semantic Scholar. Status: {response.status_code}")
+                if response.status_code >= 500:  # Server error, retry
+                    continue
+                else:  # Client error, don't retry
+                    break
                 
-            result.url = f"https://www.semanticscholar.org/paper/{paper.get('paperId', '')}"
+            data = response.json()
+            papers = data.get("data", [])
             
-            search_results.append(result)
+            if not papers:
+                logger.warning("Semantic Scholar returned no results")
+                break
+                
+            logger.info(f"Received {len(papers)} results from Semantic Scholar")
             
-        # Save to cache if we got results
-        if search_results:
-            save_to_cache(cache_key, search_results)
+            results = []
+            for i, paper in enumerate(papers, 1):
+                try:
+                    # Extract authors (maximum 3 to match other engines)
+                    authors = []
+                    if paper.get("authors"):
+                        for author in paper["authors"][:3]:
+                            author_name = author.get("name", "")
+                            if author_name:
+                                authors.append(author_name)
+                    
+                    # Get DOI if available
+                    doi = None
+                    if paper.get("externalIds") and paper["externalIds"].get("DOI"):
+                        doi = paper["externalIds"]["DOI"]
+                    
+                    # Get URL (paper URL or DOI URL)
+                    url = paper.get("url", "")
+                    if not url and doi:
+                        url = f"https://doi.org/{doi}"
+                    
+                    result = SearchResult(
+                        title=paper.get("title", ""),
+                        authors=authors,
+                        abstract=paper.get("abstract", ""),
+                        doi=doi,
+                        year=paper.get("year"),
+                        url=url,
+                        source="semanticScholar",
+                        rank=i
+                    )
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Error processing Semantic Scholar result {i}: {str(e)}")
             
-        return search_results
-        
-    except Exception as e:
-        logger.error(f"Error fetching from Semantic Scholar: {str(e)}")
-        return []
+            # Save to cache and return if we have results
+            if results:
+                save_to_cache(cache_key, results)
+                return results
+            
+            # No results found after successful request
+            break
+                
+        except Exception as e:
+            logger.error(f"Error in Semantic Scholar request (attempt {attempt+1}): {str(e)}")
+            # Continue to next retry
+    
+    # If we reach here, all attempts failed or returned no results
+    logger.warning(f"No results found in Semantic Scholar for '{query}' after {max_retries} attempts")
+    
+    # Create a placeholder result
+    no_results_msg = f"The term '{query}' did not match any documents in Semantic Scholar, or the API rate limit was exceeded."
+    placeholder = SearchResult(
+        title="[No results found in Semantic Scholar]",
+        authors=[],
+        abstract=no_results_msg,
+        year=None,
+        url="https://www.semanticscholar.org/",
+        source="semanticScholar",
+        rank=1
+    )
+    results = [placeholder]
+    
+    # Save empty results to cache
+    save_to_cache(cache_key, results)
+    return results
 
 async def get_web_of_science_results(query: str, fields: List[str], num_results: int = NUM_RESULTS) -> List[SearchResult]:
     """
-    Get results from Web of Science with caching.
+    Get results from Web of Science Starter API with caching.
     
     Args:
         query: Search query string
@@ -951,92 +1029,178 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
     cached_results = load_from_cache(cache_key)
     
     if cached_results is not None:
+        logger.info(f"Retrieved {len(cached_results)} Web of Science results from cache")
         return cached_results
         
     if not WOS_API_KEY:
         logger.error("Web of Science API key not found in environment variables.")
         return []
     
+    # Format query with proper WoS syntax
+    wos_query = f'ALL=({query})'
+    
     headers = {
         "X-ApiKey": WOS_API_KEY,
-        "Content-Type": "application/json"
+        "Accept": "application/json"
     }
     
-    body = {
-        "query": query,
-        "count": num_results,
-        "firstRecord": 1
+    # The correct WoS Starter API endpoint
+    base_url = f"{WOS_API_URL}documents"
+    
+    params = {
+        "db": "WOS",
+        "q": wos_query,  # FIXED: Don't add ALL=() twice
+        "limit": min(num_results, 50),
+        "page": 1
     }
+    
+    logger.info(f"Making Web of Science API request with query: {wos_query}")
     
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(WOS_API_URL, headers=headers, json=body)
-            
-        if response.status_code != 200:
-            logger.error(f"Error fetching from Web of Science. Status: {response.status_code}")
-            return []
-            
-        data = response.json()
-        results = data.get('Data', {}).get('Records', {}).get('records', {}).get('REC', [])
-        
-        search_results = []
-        for i, paper in enumerate(results):
-            # Extract title
-            title = ""
-            if 'static_data' in paper and 'summary' in paper['static_data']:
-                title = paper['static_data']['summary'].get('titles', {}).get('title', [{}])[0].get('content', '')
-            
-            result = SearchResult(
-                title=title,
-                source="webOfScience",
-                rank=i + 1
+            response = await client.get(
+                base_url,
+                headers=headers,
+                params=params,
+                timeout=30.0
             )
             
-            # Extract authors if requested
-            if "authors" in fields and 'static_data' in paper and 'summary' in paper['static_data']:
-                names = paper['static_data']['summary'].get('names', {}).get('name', [])
-                result.authors = [name.get('display_name', '') for name in names if name.get('role', '') == 'author'][:3]
+        if response.status_code != 200:
+            logger.warning(f"WoS API error: Status {response.status_code}")
+            logger.debug(f"Response: {response.text[:500]}")
+            # Return placeholder for error case
+            no_results_msg = f"Error accessing Web of Science API: Status {response.status_code}"
+            placeholder = SearchResult(
+                title="[Web of Science API Error]",
+                authors=[],
+                abstract=no_results_msg,
+                year=None,
+                url="https://webofknowledge.com",
+                source="webOfScience",
+                rank=1
+            )
+            results = [placeholder]
+            save_to_cache(cache_key, results)
+            return results
             
-            # Extract abstract if requested
-            if "abstract" in fields and 'static_data' in paper and 'fullrecord_metadata' in paper['static_data']:
-                result.abstract = paper['static_data']['fullrecord_metadata'].get('abstracts', {}).get('abstract', [{}])[0].get('abstract_text', {}).get('p', '')
-            
-            # Extract DOI if requested
-            if "doi" in fields and 'dynamic_data' in paper and 'cluster_related' in paper['dynamic_data']:
-                identifiers = paper['dynamic_data']['cluster_related'].get('identifiers', [])
-                for identifier in identifiers:
-                    if identifier.get('type', '') == 'doi':
-                        result.doi = identifier.get('value', '')
-                        break
-            
-            # Extract year if requested
-            if "year" in fields and 'static_data' in paper and 'summary' in paper['static_data']:
-                pub_info = paper['static_data']['summary'].get('pub_info', {})
-                if 'pubyear' in pub_info:
-                    try:
-                        result.year = int(pub_info.get('pubyear', ''))
-                    except (ValueError, TypeError):
-                        result.year = None
-            
-            # Set URL
-            if 'dynamic_data' in paper and 'cluster_related' in paper['dynamic_data']:
-                links = paper['dynamic_data']['cluster_related'].get('links', [])
-                for link in links:
-                    if link.get('type', '') == 'full_record':
-                        result.url = link.get('url', '')
-                        break
-            
-            search_results.append(result)
-            
-        # Save to cache if we got results
-        if search_results:
-            save_to_cache(cache_key, search_results)
-            
-        return search_results
+        data = response.json()
         
+        # Check if there are results
+        documents = data.get('data', [])
+        total = data.get('metadata', {}).get('total', 0)
+        
+        logger.info(f"WoS query returned {total} total results, {len(documents)} in this page")
+        
+        if not documents:
+            # No results found with the all fields search
+            logger.warning(f"No results found in Web of Science for '{query}'")
+            no_results_msg = f"The term '{query}' did not match any documents in the Web of Science Core Collection."
+            placeholder = SearchResult(
+                title="[No results found in Web of Science database]",
+                authors=[],
+                abstract=no_results_msg,
+                year=None,
+                url="https://webofknowledge.com",
+                source="webOfScience",
+                rank=1
+            )
+            results = [placeholder]
+            save_to_cache(cache_key, results)
+            return results
+            
+        # Process the results
+        results = []
+        for i, doc in enumerate(documents[:num_results], 1):
+            try:
+                # Extract title
+                title = ""
+                if 'title' in doc and isinstance(doc['title'], dict):
+                    title = doc['title'].get('value', '')
+                
+                # Extract authors - get up to 3 authors to match other sources
+                authors = []
+                if 'authors' in doc and isinstance(doc['authors'], list):
+                    for author in doc['authors'][:3]:
+                        if isinstance(author, dict):
+                            name = author.get('displayName', '')
+                            if name:
+                                authors.append(name)
+                
+                # Extract abstract
+                abstract = ""
+                if 'abstract' in doc and isinstance(doc['abstract'], str):
+                    abstract = doc['abstract']
+                elif 'abstract' in doc and isinstance(doc['abstract'], dict):
+                    abstract = doc['abstract'].get('value', '')
+                
+                # Extract DOI
+                doi = None
+                if 'identifiers' in doc and isinstance(doc['identifiers'], list):
+                    for identifier in doc['identifiers']:
+                        if identifier.get('type', '').lower() == 'doi':
+                            doi = identifier.get('value', '')
+                            break
+                
+                # Extract year
+                year = None
+                if 'source' in doc and isinstance(doc['source'], dict):
+                    year_str = doc['source'].get('publishedYear', '')
+                    if year_str:
+                        try:
+                            year = int(year_str)
+                        except (ValueError, TypeError):
+                            pass
+                
+                # Alternative year location in API response
+                if not year and 'publicationDate' in doc:
+                    pub_date = doc.get('publicationDate', {})
+                    if isinstance(pub_date, dict) and 'year' in pub_date:
+                        try:
+                            year = int(pub_date['year'])
+                        except (ValueError, TypeError):
+                            pass
+                
+                # Get URL - use DOI or the Web of Science URL
+                url = None
+                if doi:
+                    url = f"https://doi.org/{doi}"
+                
+                result = SearchResult(
+                    title=title,
+                    authors=authors,
+                    abstract=abstract,
+                    doi=doi,
+                    year=year,
+                    url=url,
+                    source="webOfScience",
+                    rank=i
+                )
+                results.append(result)
+            except Exception as e:
+                logger.error(f"Error processing WoS result {i}: {str(e)}")
+                continue
+        
+        # Save results to cache and return
+        save_to_cache(cache_key, results)
+        return results
+            
     except Exception as e:
-        logger.error(f"Error fetching from Web of Science: {str(e)}")
-        return []
+        logger.error(f"Error in WoS API request: {str(e)}")
+        
+        # Create a placeholder result for exception case
+        no_results_msg = f"Error accessing Web of Science API: {str(e)}"
+        placeholder = SearchResult(
+            title="[Web of Science API Error]",
+            authors=[],
+            abstract=no_results_msg,
+            year=None,
+            url="https://webofknowledge.com",
+            source="webOfScience",
+            rank=1
+        )
+        results = [placeholder]
+        save_to_cache(cache_key, results)
+        return results
 
 # Add this function to implement service fallback
 async def get_results_with_fallback(query: str, sources: List[str], fields: List[str], attempts: int = 2) -> Dict[str, List[SearchResult]]:
@@ -1146,27 +1310,38 @@ def compare_results(sources_results: Dict[str, List[SearchResult]], metrics: Lis
     source_lists = {}
     source_texts = {}
     
+    # Store full results by DOI and by normalized title for matching
+    source_by_doi = {}
+    source_by_title = {}
+    
     for source, results in sources_results.items():
-        # Create a set of DOIs (preferred) or normalized titles
-        if "doi" in fields:
-            # Prefer DOI-based comparison if available
-            source_sets[source] = {result.doi for result in results if result.doi}
-            
-            # Fall back to title for items without DOI
-            missing_doi_items = {preprocess_text(result.title) for result in results if not result.doi}
-            if missing_doi_items:
-                source_sets[source].update(missing_doi_items)
-        else:
-            # Use normalized titles if DOI comparison not requested
-            source_sets[source] = {preprocess_text(result.title) for result in results}
+        # Initialize containers
+        source_by_doi[source] = {}
+        source_by_title[source] = {}
+        
+        # Create a set of identifiers (both DOI and title)
+        identifiers_set = set()
+        
+        for result in results:
+            # Store by DOI if available
+            if result.doi:
+                doi = result.doi.lower().strip()
+                source_by_doi[source][doi] = result
+                identifiers_set.add(f"doi:{doi}")
+                
+            # Always store by normalized title
+            norm_title = result.title.lower().strip()
+            source_by_title[source][norm_title] = result
+            identifiers_set.add(f"title:{norm_title}")
+        
+        # Store the set for similarity calculations
+        source_sets[source] = identifiers_set
         
         # Create ordered lists for rank-based comparison
-        if "doi" in fields:
-            # Try DOI first, fall back to title
-            source_lists[source] = [result.doi if result.doi else preprocess_text(result.title) for result in results]
-        else:
-            # Use normalized titles if DOI comparison not requested
-            source_lists[source] = [preprocess_text(result.title) for result in results]
+        source_lists[source] = [
+            f"doi:{result.doi}" if result.doi else f"title:{result.title.lower().strip()}" 
+            for result in results
+        ]
         
         # Create concatenated text for text-based comparisons
         if "abstract" in fields:
@@ -1182,12 +1357,56 @@ def compare_results(sources_results: Dict[str, List[SearchResult]], metrics: Lis
     # Calculate similarity metrics between all pairs of sources
     similarity_metrics = {}
     pairwise_overlap = {}
+    detailed_overlap = {}
     
     source_names = list(sources_results.keys())
     for i, source1 in enumerate(source_names):
         for source2 in source_names[i+1:]:
             key = f"{source1}_vs_{source2}"
             pairwise_metrics = {}
+            
+            # Match papers using the same logic as the frontend
+            overlapping_papers = []
+            
+            # First, match by DOI
+            matched_ids_source1 = set()
+            for doi, paper1 in source_by_doi[source1].items():
+                if doi in source_by_doi[source2]:
+                    paper2 = source_by_doi[source2][doi]
+                    overlapping_papers.append({
+                        "identifier": doi,
+                        "match_type": "doi",
+                        "title": paper1.title,
+                        "source1_rank": paper1.rank,
+                        "source2_rank": paper2.rank
+                    })
+                    matched_ids_source1.add(paper1.title.lower().strip())
+            
+            # Then match remaining papers by title
+            for title, paper1 in source_by_title[source1].items():
+                # Skip if already matched by DOI
+                if title in matched_ids_source1:
+                    continue
+                    
+                if title in source_by_title[source2]:
+                    paper2 = source_by_title[source2][title]
+                    overlapping_papers.append({
+                        "identifier": title,
+                        "match_type": "title",
+                        "title": paper1.title,
+                        "source1_rank": paper1.rank,
+                        "source2_rank": paper2.rank
+                    })
+            
+            overlap_count = len(overlapping_papers)
+            
+            # Log the detailed overlap for debugging
+            logger.info(f"Found {overlap_count} overlapping papers between {source1} and {source2}")
+            if overlap_count > 0:
+                logger.info(f"Overlapping papers: {', '.join([p['title'][:50] + '...' for p in overlapping_papers])}")
+            
+            # Store the detailed overlap information
+            detailed_overlap[key] = overlapping_papers
             
             # Calculate Jaccard similarity
             if "jaccard" in metrics:
@@ -1218,13 +1437,13 @@ def compare_results(sources_results: Dict[str, List[SearchResult]], metrics: Lis
             similarity_metrics[key] = pairwise_metrics
             
             # Calculate overlap data for visualization
-            overlap = len(source_sets[source1].intersection(source_sets[source2]))
             pairwise_overlap[key] = {
-                "overlap": overlap,
-                "source1_only": len(source_sets[source1]) - overlap,
-                "source2_only": len(source_sets[source2]) - overlap,
+                "overlap": overlap_count,
+                "source1_only": len(sources_results[source1]) - overlap_count,
+                "source2_only": len(sources_results[source2]) - overlap_count,
                 "source1_name": source1,
-                "source2_name": source2
+                "source2_name": source2,
+                "overlapping_papers": overlapping_papers  # Add detailed paper info
             }
     
     # Prepare result
@@ -1232,6 +1451,7 @@ def compare_results(sources_results: Dict[str, List[SearchResult]], metrics: Lis
         "sourceResults": sources_results,
         "metrics": similarity_metrics,
         "overlap": pairwise_overlap,
+        "detailedOverlap": detailed_overlap,
         "allResults": [result for results in sources_results.values() for result in results]
     }
 
