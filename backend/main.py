@@ -1037,7 +1037,7 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
         return []
     
     # Format query with proper WoS syntax
-    wos_query = f'ALL=({query})'
+    wos_query = f'AU=({query})'
     
     headers = {
         "X-ApiKey": WOS_API_KEY,
@@ -1086,7 +1086,7 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
         data = response.json()
         
         # Check if there are results
-        documents = data.get('data', [])
+        documents = data.get('hits', [])
         total = data.get('metadata', {}).get('total', 0)
         
         logger.info(f"WoS query returned {total} total results, {len(documents)} in this page")
@@ -1112,65 +1112,18 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
         results = []
         for i, doc in enumerate(documents[:num_results], 1):
             try:
-                # Extract title
-                title = ""
-                if 'title' in doc and isinstance(doc['title'], dict):
-                    title = doc['title'].get('value', '')
-                
-                # Extract authors - get up to 3 authors to match other sources
-                authors = []
-                if 'authors' in doc and isinstance(doc['authors'], list):
-                    for author in doc['authors'][:3]:
-                        if isinstance(author, dict):
-                            name = author.get('displayName', '')
-                            if name:
-                                authors.append(name)
-                
-                # Extract abstract
-                abstract = ""
-                if 'abstract' in doc and isinstance(doc['abstract'], str):
-                    abstract = doc['abstract']
-                elif 'abstract' in doc and isinstance(doc['abstract'], dict):
-                    abstract = doc['abstract'].get('value', '')
-                
-                # Extract DOI
-                doi = None
-                if 'identifiers' in doc and isinstance(doc['identifiers'], list):
-                    for identifier in doc['identifiers']:
-                        if identifier.get('type', '').lower() == 'doi':
-                            doi = identifier.get('value', '')
-                            break
-                
-                # Extract year
-                year = None
-                if 'source' in doc and isinstance(doc['source'], dict):
-                    year_str = doc['source'].get('publishedYear', '')
-                    if year_str:
-                        try:
-                            year = int(year_str)
-                        except (ValueError, TypeError):
-                            pass
-                
-                # Alternative year location in API response
-                if not year and 'publicationDate' in doc:
-                    pub_date = doc.get('publicationDate', {})
-                    if isinstance(pub_date, dict) and 'year' in pub_date:
-                        try:
-                            year = int(pub_date['year'])
-                        except (ValueError, TypeError):
-                            pass
-                
                 # Get URL - use DOI or the Web of Science URL
+                doi = doc.get("identifiers", {}).get("doi", None)
                 url = None
-                if doi:
+                if doi is not None:
                     url = f"https://doi.org/{doi}"
                 
                 result = SearchResult(
-                    title=title,
-                    authors=authors,
-                    abstract=abstract,
+                    title=doc.get("title"),
+                    authors=[a.get("displayName", "") for a in doc.get("names", {}).get("authors", [])[:3]],
+                    abstract='',
                     doi=doi,
-                    year=year,
+                    year=doc.get("source", {}).get("publishYear"),
                     url=url,
                     source="webOfScience",
                     rank=i
@@ -1574,6 +1527,7 @@ async def compare_search_results(request: SearchRequest):
         source_task_map[task] = "semanticScholar"
     
     if "webOfScience" in request.sources:
+        logger.info(f'WoS {request.query}')
         task = asyncio.create_task(get_web_of_science_results(request.query, request.fields))
         tasks.append(task)
         source_task_map[task] = "webOfScience"
