@@ -110,7 +110,11 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://search-engine-comparator.onrender.com", "http://localhost:3000"],  # Frontend URLs
+    allow_origins=[
+        "https://search-engine-comparator.onrender.com", 
+        "http://localhost:3000",
+        "https://search-engine-comparator-1.onrender.com"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1037,11 +1041,7 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
         return []
     
     # Format query with proper WoS syntax
-<<<<<<< HEAD
-    wos_query = f'ALL=({query})'
-=======
     wos_query = f'AU=({query})'
->>>>>>> d23b079 (Update CORS settings for production)
     
     headers = {
         "X-ApiKey": WOS_API_KEY,
@@ -1053,11 +1053,7 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
     
     params = {
         "db": "WOS",
-<<<<<<< HEAD
-        "q": wos_query,  # FIXED: Don't add ALL=() twice
-=======
         "q": f'{wos_query}',  # FIXED: Don't add ALL=() twice
->>>>>>> d23b079 (Update CORS settings for production)
         "limit": min(num_results, 50),
         "page": 1
     }
@@ -1094,11 +1090,7 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
         data = response.json()
         
         # Check if there are results
-<<<<<<< HEAD
-        documents = data.get('data', [])
-=======
         documents = data.get('hits', [])
->>>>>>> d23b079 (Update CORS settings for production)
         total = data.get('metadata', {}).get('total', 0)
         
         logger.info(f"WoS query returned {total} total results, {len(documents)} in this page")
@@ -1124,67 +1116,6 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
         results = []
         for i, doc in enumerate(documents[:num_results], 1):
             try:
-<<<<<<< HEAD
-                # Extract title
-                title = ""
-                if 'title' in doc and isinstance(doc['title'], dict):
-                    title = doc['title'].get('value', '')
-                
-                # Extract authors - get up to 3 authors to match other sources
-                authors = []
-                if 'authors' in doc and isinstance(doc['authors'], list):
-                    for author in doc['authors'][:3]:
-                        if isinstance(author, dict):
-                            name = author.get('displayName', '')
-                            if name:
-                                authors.append(name)
-                
-                # Extract abstract
-                abstract = ""
-                if 'abstract' in doc and isinstance(doc['abstract'], str):
-                    abstract = doc['abstract']
-                elif 'abstract' in doc and isinstance(doc['abstract'], dict):
-                    abstract = doc['abstract'].get('value', '')
-                
-                # Extract DOI
-                doi = None
-                if 'identifiers' in doc and isinstance(doc['identifiers'], list):
-                    for identifier in doc['identifiers']:
-                        if identifier.get('type', '').lower() == 'doi':
-                            doi = identifier.get('value', '')
-                            break
-                
-                # Extract year
-                year = None
-                if 'source' in doc and isinstance(doc['source'], dict):
-                    year_str = doc['source'].get('publishedYear', '')
-                    if year_str:
-                        try:
-                            year = int(year_str)
-                        except (ValueError, TypeError):
-                            pass
-                
-                # Alternative year location in API response
-                if not year and 'publicationDate' in doc:
-                    pub_date = doc.get('publicationDate', {})
-                    if isinstance(pub_date, dict) and 'year' in pub_date:
-                        try:
-                            year = int(pub_date['year'])
-                        except (ValueError, TypeError):
-                            pass
-                
-                # Get URL - use DOI or the Web of Science URL
-                url = None
-                if doi:
-                    url = f"https://doi.org/{doi}"
-                
-                result = SearchResult(
-                    title=title,
-                    authors=authors,
-                    abstract=abstract,
-                    doi=doi,
-                    year=year,
-=======
                 # Get URL - use DOI or the Web of Science URL
                 doi = doc.get("identifiers", {}).get("doi", None)
                 url = None
@@ -1197,7 +1128,6 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
                     abstract='',
                     doi=doi,
                     year=doc.get("source", {}).get("publishYear"),
->>>>>>> d23b079 (Update CORS settings for production)
                     url=url,
                     source="webOfScience",
                     rank=i
