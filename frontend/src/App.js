@@ -11,6 +11,8 @@ import ResultsTable from './components/ResultsTable';
 import SciXModifier from './components/SciXModifier';
 import SideBySideComparison from './components/SideBySideComparison';
 
+const API_URL = process.env.REACT_APP_API_URL || 'https://search-engine-comparator.onrender.com';
+
 function App() {
   // State for search query and options
   const [query, setQuery] = useState('');
@@ -100,7 +102,7 @@ function App() {
         fields: selectedFields
       };
       
-      const response = await fetch('/api/compare', {
+      const response = await fetch(`${API_URL}/api/compare`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
