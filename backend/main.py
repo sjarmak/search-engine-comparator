@@ -128,7 +128,7 @@ NUM_RESULTS = 20
 TIMEOUT_SECONDS = 60  # Increased from 30 to 60
 
 # Get API keys from environment variables
-# ADS_API_KEY = os.getenv("ADS_API_KEY")
+ADS_API_KEY = os.getenv("ADS_API_KEY")
 SEMANTIC_SCHOLAR_API_KEY = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
 WOS_API_KEY = os.getenv("WOS_API_KEY")
 
