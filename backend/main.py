@@ -1037,7 +1037,13 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
         return []
     
     # Format query with proper WoS syntax
-    wos_query = f'AU=({query})'
+    #Allowed tags are AI, AU, CS, DO, DT, FPY, IS, OG, PG, PMID, PY, SO, SUR, TI, TS, UT, VL.
+    # use AU for author, FPY for final publication year, OG for organization-enhanced, PY for year published
+    # use PMID for PubMed ID, SO for publication name,
+    # TS for topic terms in Title, Abstract, Author Keywords, Keywords Plus fields.
+    # UT for accession number (a UUID)
+    # Likely best query is AU=(q) OR TS=(q)
+    wos_query = f'AU=({query}) OR TS=({query})'
     
     headers = {
         "X-ApiKey": WOS_API_KEY,
