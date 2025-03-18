@@ -39,3 +39,5 @@ yarn-error.log*
 coverage/
 .coverage
 htmlcov/
+.vercel
+backend/cache/*.json

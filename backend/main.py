@@ -110,7 +110,11 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "https://search-engine-comparator.onrender.com", 
+        "http://localhost:3000",
+        "https://search-engine-comparator-1.onrender.com"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -124,7 +128,7 @@ NUM_RESULTS = 20
 TIMEOUT_SECONDS = 60  # Increased from 30 to 60
 
 # Get API keys from environment variables
-# ADS_API_KEY = os.getenv("ADS_API_KEY")
+ADS_API_KEY = os.getenv("ADS_API_KEY")
 SEMANTIC_SCHOLAR_API_KEY = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
 WOS_API_KEY = os.getenv("WOS_API_KEY")
 
@@ -1037,6 +1041,7 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
         return []
     
     # Format query with proper WoS syntax
+
     #Allowed tags are AI, AU, CS, DO, DT, FPY, IS, OG, PG, PMID, PY, SO, SUR, TI, TS, UT, VL.
     # use AU for author, FPY for final publication year, OG for organization-enhanced, PY for year published
     # use PMID for PubMed ID, SO for publication name,
@@ -1055,7 +1060,7 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
     
     params = {
         "db": "WOS",
-        "q": wos_query,  # FIXED: Don't add ALL=() twice
+        "q": f'{wos_query}',  # FIXED: Don't add ALL=() twice
         "limit": min(num_results, 50),
         "page": 1
     }
