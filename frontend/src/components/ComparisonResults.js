@@ -7,7 +7,7 @@ import {
 } from '@mui/material';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer
+  Tooltip, Legend, ResponsiveContainer, Cell
 } from 'recharts';
 
 const ComparisonResults = ({ data }) => {
@@ -262,9 +262,5 @@ const ComparisonResults = ({ data }) => {
     </Card>
   );
 };
-
-const Cell = ({ fill, ...props }) => (
-  <Bar.Cell {...props} fill={fill} />
-);
 
 export default ComparisonResults;
