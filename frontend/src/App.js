@@ -32,7 +32,7 @@ function App() {
   // State for similarity metrics selection
   const [metrics, setMetrics] = useState({
     jaccard: true,
-    rankBased: true,
+    rankBiased: true,
     cosine: false,
     euclidean: false
   });
@@ -174,8 +174,8 @@ function App() {
                     label="Jaccard Similarity"
                   />
                   <FormControlLabel
-                    control={<Checkbox checked={metrics.rankBased} onChange={handleMetricsChange} name="rankBased" />}
-                    label="Rank-Based Overlap"
+                    control={<Checkbox checked={metrics.rankBiased} onChange={handleMetricsChange} name="rankBiased" />}
+                    label="Rank-Biased Overlap"
                   />
                   <FormControlLabel
                     control={<Checkbox checked={metrics.cosine} onChange={handleMetricsChange} name="cosine" />}

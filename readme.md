@@ -7,7 +7,7 @@ NOTE: Web of Science is not yet configured in the current code.
 ## Features
 
 - **Multi-Source Search**: Query multiple academic search engines simultaneously
-- **Advanced Similarity Metrics**: Compare results using Jaccard similarity, rank-based overlap, and more
+- **Advanced Similarity Metrics**: Compare results using Jaccard similarity, rank-biased overlap, and more
 - **Visualization**: Interactive charts and Venn diagrams to visualize overlap and similarities
 - **SciX Ranking Modifier**: Experiment with modifications to SciX's ranking algorithm
 - **Flexible Metadata Comparison**: Configure which metadata fields to consider in comparisons
