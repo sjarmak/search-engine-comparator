@@ -110,7 +110,7 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["https://search-engine-comparator.onrender.com", "http://localhost:3000"],  # Frontend URLs
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1037,7 +1037,11 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
         return []
     
     # Format query with proper WoS syntax
+<<<<<<< HEAD
     wos_query = f'ALL=({query})'
+=======
+    wos_query = f'AU=({query})'
+>>>>>>> d23b079 (Update CORS settings for production)
     
     headers = {
         "X-ApiKey": WOS_API_KEY,
@@ -1049,7 +1053,11 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
     
     params = {
         "db": "WOS",
+<<<<<<< HEAD
         "q": wos_query,  # FIXED: Don't add ALL=() twice
+=======
+        "q": f'{wos_query}',  # FIXED: Don't add ALL=() twice
+>>>>>>> d23b079 (Update CORS settings for production)
         "limit": min(num_results, 50),
         "page": 1
     }
@@ -1086,7 +1094,11 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
         data = response.json()
         
         # Check if there are results
+<<<<<<< HEAD
         documents = data.get('data', [])
+=======
+        documents = data.get('hits', [])
+>>>>>>> d23b079 (Update CORS settings for production)
         total = data.get('metadata', {}).get('total', 0)
         
         logger.info(f"WoS query returned {total} total results, {len(documents)} in this page")
@@ -1112,6 +1124,7 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
         results = []
         for i, doc in enumerate(documents[:num_results], 1):
             try:
+<<<<<<< HEAD
                 # Extract title
                 title = ""
                 if 'title' in doc and isinstance(doc['title'], dict):
@@ -1171,6 +1184,20 @@ async def get_web_of_science_results(query: str, fields: List[str], num_results:
                     abstract=abstract,
                     doi=doi,
                     year=year,
+=======
+                # Get URL - use DOI or the Web of Science URL
+                doi = doc.get("identifiers", {}).get("doi", None)
+                url = None
+                if doi is not None:
+                    url = f"https://doi.org/{doi}"
+                
+                result = SearchResult(
+                    title=doc.get("title"),
+                    authors=[a.get("displayName", "") for a in doc.get("names", {}).get("authors", [])[:3]],
+                    abstract='',
+                    doi=doi,
+                    year=doc.get("source", {}).get("publishYear"),
+>>>>>>> d23b079 (Update CORS settings for production)
                     url=url,
                     source="webOfScience",
                     rank=i
