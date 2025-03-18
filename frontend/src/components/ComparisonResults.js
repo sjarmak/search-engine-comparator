@@ -164,7 +164,7 @@ const ComparisonResults = ({ data }) => {
                     margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
+                    <XAxis dataKey="name" tick={{ fontSize: 12 }} height={60} tickMargin={5} angle={-45} textAnchor="end" />
                     <YAxis />
                     <Tooltip />
                     <Bar dataKey="results" name="Results">

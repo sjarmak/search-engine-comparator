@@ -71,7 +71,7 @@ const MetricsTable = ({ metrics }) => {
     switch(metric) {
       case 'jaccard':
         return 'Measures the similarity between finite sample sets, and is defined as the size of the intersection divided by the size of the union of the sample sets.';
-      case 'rankBased':
+      case 'rankBiased':
         return 'Measures the similarity between two ranked lists, taking into account both overlap and position in the rankings.';
       case 'cosine':
         return 'Measures the cosine of the angle between two vectors, representing how similar the two vectors are irrespective of their size.';
