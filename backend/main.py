@@ -1533,7 +1533,6 @@ async def compare_search_results(request: SearchRequest):
         source_task_map[task] = "semanticScholar"
     
     if "webOfScience" in request.sources:
-        logger.info(f'WoS {request.query}')
         task = asyncio.create_task(get_web_of_science_results(request.query, request.fields))
         tasks.append(task)
         source_task_map[task] = "webOfScience"
