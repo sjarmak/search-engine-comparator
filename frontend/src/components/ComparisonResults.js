@@ -161,10 +161,17 @@ const ComparisonResults = ({ data }) => {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={prepareChartData()}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                    margin={{ top: 20, right: 30, left: 20, bottom: 30 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" tick={{ fontSize: 12 }} height={60} tickMargin={5} angle={-45} textAnchor="end" />
+                    <XAxis 
+                      dataKey="name" 
+                      tick={{ fontSize: 11 }} 
+                      height={80}
+                      tickMargin={10}
+                      angle={-45}
+                      textAnchor="end"
+                    />
                     <YAxis />
                     <Tooltip />
                     <Bar dataKey="results" name="Results">

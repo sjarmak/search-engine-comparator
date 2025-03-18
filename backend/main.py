@@ -1382,8 +1382,8 @@ def compare_results(sources_results: Dict[str, List[SearchResult]], metrics: Lis
                 )
             
             # Calculate rank-based overlap
-            if "rankBased" in metrics:
-                pairwise_metrics["rankBased"] = calculate_rank_based_overlap(
+            if "rankBiased" in metrics:
+                pairwise_metrics["rankBiased"] = calculate_rank_based_overlap(
                     source_lists[source1], source_lists[source2]
                 )
             
