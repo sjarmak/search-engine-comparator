@@ -1,0 +1,14 @@
+/*
+  Content-Type: text/html; charset=utf-8
+
+/static/js/*.js
+  Content-Type: application/javascript
+
+/static/css/*.css
+  Content-Type: text/css
+
+/static/media/*
+  Content-Type: image/png
+
+/manifest.json
+  Content-Type: application/json
