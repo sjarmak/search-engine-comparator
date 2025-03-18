@@ -42,13 +42,13 @@ const ComparisonResults = ({ data }) => {
   const getSourceColor = (source) => {
     switch(source) {
       case 'ads':
-        return '#4285F4'; // Blue
+        return '#E57373'; // Light red
       case 'scholar':
-        return '#EA4335'; // Red
+        return '#64B5F6'; // Light blue
       case 'webOfScience':
-        return '#34A853'; // Green
+        return '#FFD54F'; // Light yellow
       case 'semanticScholar':
-        return '#FBBC05'; // Yellow
+        return '#81C784'; // Light green
       default:
         return '#9E9E9E'; // Grey
     }

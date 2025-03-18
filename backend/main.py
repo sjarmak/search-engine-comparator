@@ -115,7 +115,8 @@ app.add_middleware(
         "http://localhost:3000",
         "https://search-engine-comparator-1.onrender.com",
         "https://search-engine-comparator-web.onrender.com",
-        "https://search-engine-comparator-api.onrender.com"
+        "https://search-engine-comparator-api.onrender.com",
+        "https://search.sjarmak.ai"  # Add your custom domain
     ],
     allow_credentials=True,
     allow_methods=["*"],
