@@ -55,8 +55,8 @@ const MetricsTable = ({ metrics }) => {
     switch(metric) {
       case 'jaccard':
         return 'Jaccard Similarity';
-      case 'rankBased':
-        return 'Rank-Based Overlap';
+      case 'rankBiased':
+        return 'Rank-Biased Overlap';
       case 'cosine':
         return 'Cosine Similarity';
       case 'euclidean':
