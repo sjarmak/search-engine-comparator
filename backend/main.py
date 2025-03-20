@@ -1653,6 +1653,9 @@ async def boost_experiment(data: dict):
         original_results = data.get("results", [])
         boost_config = data.get("boostConfig", {})
         
+        # Debug logging to see what's in the results
+        logger.info(f"First result data: {original_results[0] if original_results else 'No results'}")
+        
         if not original_results or len(original_results) == 0:
             logger.warning("No results provided for boost experiment")
             return {
@@ -1666,30 +1669,72 @@ async def boost_experiment(data: dict):
         results_copy = []
         for i, result in enumerate(original_results):
             # Extract and clean necessary fields
+            # First log the raw properties to see what we're working with
+            logger.info(f"Result {i} properties: {result.get('property', [])}")
+            logger.info(f"Result {i} doctype: {result.get('doctype', 'none')}")
+            
+            # Extract year safely
+            year = 0
+            try:
+                if result.get("year"):
+                    year = int(result.get("year"))
+                elif result.get("pubdate"):
+                    year_str = result.get("pubdate", "").split("-")[0]
+                    if year_str.isdigit():
+                        year = int(year_str)
+            except (ValueError, TypeError, IndexError):
+                logger.warning(f"Could not parse year for result {i}")
+                
+            # Extract citations safely
+            citations = 0
+            try:
+                if result.get("citation_count"):
+                    citations = int(result.get("citation_count"))
+            except (ValueError, TypeError):
+                logger.warning(f"Could not parse citations for result {i}")
+            
+            # Check for refereed status in properties array
+            property_array = result.get("property", [])
+            if isinstance(property_array, str):
+                property_array = [property_array]
+            
+            # A debug log to see the actual property array
+            logger.info(f"Result {i} property array: {property_array}")
+            
+            # Determine refereed status
+            refereed = False
+            if property_array:
+                refereed = "refereed" in property_array
+                
+            # Additional check for refereed flag as a direct property
+            if not refereed and result.get("refereed") in (True, "true", "True", 1):
+                refereed = True
+                
+            # Extract doctype safely
+            doctype = "article"  # Default
+            if result.get("doctype"):
+                doctype = str(result.get("doctype"))
+            elif result.get("pub_type"):
+                doctype = str(result.get("pub_type"))
+            elif property_array:
+                if "Article" in property_array:
+                    doctype = "article"
+                elif "Thesis" in property_array:
+                    doctype = "thesis"
+                elif "Proceedings" in property_array:
+                    doctype = "proceedings"
+                    
             clean_result = {
                 "title": str(result.get("title", "")),
                 "authors": result.get("authors", []),
-                "year": result.get("year", 0) or result.get("pubdate", "").split("-")[0] if result.get("pubdate") else 0,
-                "pubyear": result.get("year", 0) or result.get("pubdate", "").split("-")[0] if result.get("pubdate") else 0,
-                "citations": result.get("citation_count", 0),
+                "year": year,
+                "pubyear": year,  # Use the same safely extracted year
+                "citations": citations,
                 "originalRank": i + 1,
                 "source": str(result.get("source", "")),
                 "collection": result.get("collection", "general"),
-                
-                # Extract doctype properly - might be in different fields depending on the source
-                "doctype": (
-                    result.get("doctype", "") or 
-                    result.get("pub_type", "") or 
-                    ("article" if "Article" in result.get("property", []) else 
-                     "thesis" if "Thesis" in result.get("property", []) else
-                     "proceedings" if "Proceedings" in result.get("property", []) else
-                     "article")  # Default to article if we can't determine
-                ),
-                
-                # Check for refereed status in property array
-                "refereed": "refereed" in result.get("property", []),
-                
-                # Get the best possible identifier
+                "doctype": doctype,
+                "refereed": refereed,
                 "identifier": (
                     result.get("bibcode", "") or 
                     result.get("doi", "") or 
@@ -1710,7 +1755,7 @@ async def boost_experiment(data: dict):
             # 1. Calculate citation boost if enabled
             if boost_config.get("enableCiteBoost", True):
                 cite_weight = float(boost_config.get("citeBoostWeight", 1.0))
-                citations = float(result.get("citations", 0))
+                citations = result.get("citations", 0)
                 
                 # Simple citation boost - in real implementation this would use percentile
                 # based on collection and publication year
@@ -1725,9 +1770,9 @@ async def boost_experiment(data: dict):
             if boost_config.get("enableRecencyBoost", True):
                 recency_weight = float(boost_config.get("recencyBoostWeight", 1.0))
                 recency_function = boost_config.get("recencyFunction", "inverse")
-                pubyear = result.get("pubyear")
+                pubyear = result.get("pubyear", 0)
                 
-                if pubyear and pubyear > 0:
+                if pubyear > 0:
                     # Calculate age in months (approximate)
                     age_years = current_year - pubyear
                     age_months = age_years * 12 + current_month
@@ -1765,7 +1810,7 @@ async def boost_experiment(data: dict):
             # 3. Calculate doctype boost if enabled
             if boost_config.get("enableDoctypeBoost", True):
                 doctype_weight = float(boost_config.get("doctypeBoostWeight", 1.0))
-                doctype = result.get("doctype", "").lower()
+                doctype = str(result.get("doctype", "")).lower()
                 
                 # Simplified doctype ranking
                 doctype_ranks = {
