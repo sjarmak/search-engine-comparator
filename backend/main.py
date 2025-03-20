@@ -32,6 +32,7 @@ import ssl
 import certifi
 import signal
 from contextlib import contextmanager
+import rbo
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
@@ -384,47 +385,37 @@ def calculate_jaccard_similarity(set1: set, set2: set) -> float:
     union = len(set1.union(set2))
     return intersection / union if union > 0 else 0.0
 
-def calculate_rank_based_overlap(list1: List[Any], list2: List[Any], k: int = None) -> float:
+def calculate_rank_based_overlap(list1, list2, p=0.9):
     """
-    Calculate rank-based overlap (RBO) between two ranked lists.
-    Implementation based on "A Similarity Measure for Indefinite Rankings" by Webber et al.
+    Calculate the rank-biased overlap between two lists.
     
     Args:
-        list1: First ranked list
-        list2: Second ranked list
-        k: Depth of evaluation (if None, use the length of the shorter list)
-        
+        list1: First list of results (expected to contain dict items with 'title' keys)
+        list2: Second list of results (expected to contain dict items with 'title' keys)
+        p: The persistence parameter (default: 0.9), determines how strongly 
+           top-ranked items are weighted
+    
     Returns:
-        Float value between 0 and 1, where 1 is perfect agreement
+        float: A score between 0 and 1, where 1 indicates identical rankings
     """
-    if not list1 or not list2:
+    # Extract titles from the two lists to use as identifiers
+    titles1 = [item['title'].lower().strip() for item in list1]
+    titles2 = [item['title'].lower().strip() for item in list2]
+    
+    # If either list is empty, return 0
+    if not titles1 or not titles2:
         return 0.0
     
-    # Use the smaller list's length if k is not specified
-    if k is None:
-        k = min(len(list1), len(list2))
-    else:
-        k = min(k, min(len(list1), len(list2)))
-    
-    # Weight parameter (typically 0.9 or 0.98)
-    p = 0.9
-    
-    # Calculate the weighted overlap at each depth
-    sum_weight = 0
-    curr_weight = (1 - p)
-    total = 0
-    
-    for depth in range(1, k + 1):
-        set1 = set(list1[:depth])
-        set2 = set(list2[:depth])
-        overlap = len(set1.intersection(set2))
-        agreement = overlap / depth
-        total += curr_weight * agreement
-        sum_weight += curr_weight
-        curr_weight *= p
-    
-    # Normalize by the sum of weights
-    return total / sum_weight if sum_weight > 0 else 0.0
+    try:
+        # Calculate RBO using the imported library
+        # The rbo.RankingSimilarity takes two lists and computes various metrics
+        similarity = rbo.RankingSimilarity(titles1, titles2)
+        
+        # Return the RBO score with the specified persistence parameter
+        return similarity.rbo(p=p)
+    except Exception as e:
+        logger.error(f"Error calculating rank-biased overlap: {e}")
+        return 0.0
 
 def calculate_cosine_similarity(vec1: Dict[str, int], vec2: Dict[str, int]) -> float:
     """Calculate cosine similarity between two term frequency vectors."""

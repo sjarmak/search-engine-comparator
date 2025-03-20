@@ -72,7 +72,7 @@ const MetricsTable = ({ metrics }) => {
       case 'jaccard':
         return 'Measures the similarity between finite sample sets, and is defined as the size of the intersection divided by the size of the union of the sample sets.';
       case 'rankBiased':
-        return 'Measures the similarity between two ranked lists, taking into account both overlap and position in the rankings.';
+        return 'Rank-Biased Overlap (RBO) by Webber et al. (2010). Measures the similarity between two ranked lists, weighting items towards the top of the lists more heavily using a persistence parameter p=0.9.';
       case 'cosine':
         return 'Measures the cosine of the angle between two vectors, representing how similar the two vectors are irrespective of their size.';
       case 'euclidean':
