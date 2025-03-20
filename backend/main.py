@@ -34,6 +34,7 @@ import signal
 from contextlib import contextmanager
 import rbo
 from datetime import datetime
+import traceback
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
@@ -184,34 +185,34 @@ def setup_scholarly_proxy() -> bool:
         # Try free proxies first
         logger.info("Attempting to set up free proxies for Google Scholar")
         try:
-            success = pg.FreeProxies(timeout=15)
+            # Updated to match new FreeProxy API
+            success = pg.FreeProxies()
             if success:
                 logger.info("Successfully set up free proxies for Google Scholar")
                 scholarly.use_proxy(pg)
                 scholarly.set_timeout(20)  # Slightly higher timeout
-                
-                # Additional scholarly settings to reduce CAPTCHA risk
-                if hasattr(scholarly, '_SESSION_HEADER'):
-                    scholarly._SESSION_HEADER.update({
-                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                        'Accept-Language': 'en-US,en;q=0.9'
-                    })
-                
                 return True
         except Exception as e:
             logger.warning(f"Free proxies setup failed: {str(e)}")
         
-        # Try with a specific country's proxies
+        # Try built-in Scholarly methods
         try:
-            success = pg.FreeProxies(country="us", timeout=15)
+            success = pg.Tor_External(tor_sock_port=9050, tor_control_port=9051)
             if success:
-                logger.info("Successfully set up US free proxies for Google Scholar")
+                logger.info("Successfully set up Tor proxy for Google Scholar")
                 scholarly.use_proxy(pg)
-                scholarly.set_timeout(20)
                 return True
         except Exception as e:
-            logger.warning(f"Country-specific proxies setup failed: {str(e)}")
+            logger.warning(f"Tor proxy setup failed: {str(e)}")
+            
+        try:
+            success = pg.Luminati(username='username', password='password', proxy_port=22225)
+            if success:
+                logger.info("Successfully set up Luminati proxy for Google Scholar")
+                scholarly.use_proxy(pg)
+                return True
+        except Exception as e:
+            logger.warning(f"Luminati proxy setup failed: {str(e)}")
         
         # Last resort: direct connection
         logger.info("Using direct connection for Google Scholar (no proxy)")
@@ -1622,26 +1623,36 @@ async def compare_search_results(request: SearchRequest):
 async def modify_scix_ranking(data: dict):
     """
     Apply custom modifications to SciX ranking and return re-ranked results.
-    
-    Args:
-        data: Dictionary containing:
-            - query: Original search query
-            - results: List of original results
-            - modifications: Dictionary of ranking modifications to apply
-            
-    Returns:
-        Dict containing modified results and metadata
     """
     try:
+        # Log incoming data structure
+        logger.info(f"Received modification request with data keys: {data.keys()}")
+        
         query = data.get("query")
         original_results = data.get("results", [])
         modifications = data.get("modifications", {})
         
+        logger.info(f"Query: {query}")
+        logger.info(f"Number of original results: {len(original_results)}")
+        logger.info(f"Modifications requested: {modifications}")
+        
         if not query or not original_results:
             raise HTTPException(status_code=400, detail="Query and original results are required")
         
-        # Create a copy of results to modify
-        modified_results = [dict(r) for r in original_results]
+        # Ensure results are properly serializable
+        modified_results = []
+        for r in original_results:
+            try:
+                # Convert to dict if it's not already
+                result_dict = dict(r) if not isinstance(r, dict) else r.copy()
+                # Ensure all values are JSON serializable
+                for key, value in result_dict.items():
+                    if isinstance(value, (datetime, date)):
+                        result_dict[key] = value.isoformat()
+                modified_results.append(result_dict)
+            except Exception as e:
+                logger.error(f"Error converting result to dict: {str(e)}")
+                continue
         
         # Track which results were modified
         modified_count = 0
@@ -1658,8 +1669,8 @@ async def modify_scix_ranking(data: dict):
                 title = result.get("title", "").lower()
                 if any(keyword in title for keyword in keywords):
                     result["boosted"] = True
-                    result["originalRank"] = result["rank"]
-                    result["rank"] = result["rank"] / boost_factor
+                    result["originalRank"] = result.get("rank", 0)
+                    result["rank"] = float(result.get("rank", 0)) / boost_factor
                     modified_count += 1
         
         # Example: Boost recent papers
@@ -1668,22 +1679,27 @@ async def modify_scix_ranking(data: dict):
             
             for result in modified_results:
                 year = result.get("year")
-                if year and isinstance(year, (int, float)):
-                    age = current_year - int(year)
-                    if age <= 5:  # Papers from last 5 years
-                        result["boosted"] = True
-                        result["originalRank"] = result.get("originalRank", result["rank"])
-                        result["rank"] = result["rank"] / (recency_factor * (1 - age/10))
-                        modified_count += 1
+                if year and isinstance(year, (int, float, str)):
+                    try:
+                        year_int = int(float(str(year)))
+                        age = current_year - year_int
+                        if age <= 5:  # Papers from last 5 years
+                            result["boosted"] = True
+                            result["originalRank"] = result.get("originalRank", result.get("rank", 0))
+                            result["rank"] = float(result.get("rank", 0)) / (recency_factor * (1 - age/10))
+                            modified_count += 1
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Error processing year value {year}: {str(e)}")
+                        continue
         
         # Sort by new rank
-        modified_results.sort(key=lambda x: float(x["rank"]))
+        modified_results.sort(key=lambda x: float(x.get("rank", float('inf'))))
         
         # Update ranks after sorting
         for i, result in enumerate(modified_results, 1):
             result["rank"] = i
         
-        return {
+        response_data = {
             "results": modified_results,
             "metadata": {
                 "modifiedCount": modified_count,
@@ -1691,8 +1707,25 @@ async def modify_scix_ranking(data: dict):
             }
         }
         
+        # Verify JSON serialization before returning
+        try:
+            json.dumps(response_data)
+        except Exception as e:
+            logger.error(f"JSON serialization error: {str(e)}")
+            # Clean up non-serializable data
+            for result in modified_results:
+                for key, value in list(result.items()):
+                    try:
+                        json.dumps({key: value})
+                    except:
+                        logger.warning(f"Removing non-serializable value for key: {key}")
+                        result[key] = str(value)
+        
+        return response_data
+        
     except Exception as e:
         logger.error(f"Error in modify_scix_ranking: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to modify results: {str(e)}")
 
 # Root endpoint for API status check
