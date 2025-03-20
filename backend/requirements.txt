@@ -8,3 +8,4 @@ beautifulsoup4==4.12.2
 nltk==3.8.1
 python-multipart==0.0.6
 asyncio==3.4.3
+rbo
