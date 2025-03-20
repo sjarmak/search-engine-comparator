@@ -8,8 +8,8 @@ import ComparisonResults from './components/ComparisonResults';
 import VennDiagram from './components/VennDiagram';
 import MetricsTable from './components/MetricsTable';
 import ResultsTable from './components/ResultsTable';
-import SciXModifier from './components/SciXModifier';
 import SideBySideComparison from './components/SideBySideComparison';
+import BoostExperiment from './components/BoostExperiment';
 
 const API_URL = process.env.REACT_APP_API_URL || 'https://search-engine-comparator.onrender.com';
 
@@ -243,37 +243,22 @@ function App() {
               </Alert>
             )}
 
-            <Tabs value={tabValue} onChange={handleTabChange} centered sx={{ mb: 3 }}>
-              <Tab label="Overview" />
-              <Tab label="Detailed Results" />
-              <Tab label="Side-by-Side Comparison" />
-              <Tab label="ADS/SciX Modifier" />
+            <Tabs value={tabValue} onChange={handleTabChange} aria-label="results tabs">
+              <Tab label="Results" />
+              <Tab label="Comparison" />
+              <Tab label="Visualization" />
+              <Tab label="SciX Modifier" />
+              <Tab label="Boost Experiment" />
             </Tabs>
             
             <Box role="tabpanel" hidden={tabValue !== 0}>
               {tabValue === 0 && (
-                <Grid container spacing={3}>
-                  <Grid item xs={12}>
-                    <ComparisonResults data={results} />
-                  </Grid>
-                  <Grid item xs={12} md={6}>
-                    <VennDiagram data={results.overlap} />
-                  </Grid>
-                  <Grid item xs={12} md={6}>
-                    <MetricsTable metrics={results.metrics} />
-                  </Grid>
-                </Grid>
+                <ResultsTable results={results.allResults} />
               )}
             </Box>
             
             <Box role="tabpanel" hidden={tabValue !== 1}>
               {tabValue === 1 && (
-                <ResultsTable results={results.allResults} />
-              )}
-            </Box>
-            
-            <Box role="tabpanel" hidden={tabValue !== 2}>
-              {tabValue === 2 && (
                 <SideBySideComparison 
                   results={results.allResults} 
                   sourceResults={results.sourceResults}
@@ -281,9 +266,21 @@ function App() {
               )}
             </Box>
             
+            <Box role="tabpanel" hidden={tabValue !== 2}>
+              {tabValue === 2 && (
+                <ComparisonResults data={results} />
+              )}
+            </Box>
+            
             <Box role="tabpanel" hidden={tabValue !== 3}>
               {tabValue === 3 && (
-                <SciXModifier 
+                <VennDiagram data={results.overlap} />
+              )}
+            </Box>
+            
+            <Box role="tabpanel" hidden={tabValue !== 4}>
+              {tabValue === 4 && (
+                <BoostExperiment 
                   originalResults={results.sourceResults.ads || []} 
                   query={query}
                 />

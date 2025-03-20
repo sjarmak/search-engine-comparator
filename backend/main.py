@@ -510,7 +510,7 @@ async def get_ads_results(query: str, fields: List[str], num_results: int = NUM_
                 params=params
             )
             
-        if response and response.status_code != 200:
+        if response.status_code != 200:
             logger.error(f"ADS API error: Status {response.status_code}")
             logger.error(f"ADS API response: {response.text[:500]}")  # Log first 500 chars of error
             return []
@@ -1623,48 +1623,6 @@ async def compare_search_results(request: SearchRequest):
             "allResults": []
         }
 
-# Endpoint to modify SciX ranking - simplified for debugging
-@app.post("/api/modify-scix")
-async def modify_scix_ranking(data: dict):
-    """
-    Apply custom modifications to SciX ranking and return re-ranked results.
-    """
-    try:
-        # Log that we entered the function
-        logger.info("SCIX MODIFIER: Function called")
-        
-        # Just echo back a simple response
-        return {
-            "modifiedResults": [
-                {
-                    "title": "Test Paper 1",
-                    "authors": ["Test Author"],
-                    "year": 2023,
-                    "rank": 1,
-                    "newRank": 1,
-                    "boosted": False,
-                    "source": "ads"
-                },
-                {
-                    "title": "Test Paper 2",
-                    "authors": ["Test Author"],
-                    "year": 2022,
-                    "rank": 2,
-                    "newRank": 2,
-                    "boosted": False,
-                    "source": "ads"
-                }
-            ],
-            "metadata": {
-                "modifiedCount": 0,
-                "totalResults": 2
-            }
-        }
-    except Exception as e:
-        logger.error(f"SCIX ERROR: {str(e)}")
-        logger.error(f"SCIX TRACEBACK: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Debug error: {str(e)}")
-
 # Test endpoint 
 @app.get("/api/test")
 async def test_endpoint():
@@ -1677,6 +1635,201 @@ async def test_endpoint():
 async def root():
     """Root endpoint to check if API is running."""
     return {"status": "ok", "message": "Academic Search Results Comparator API is running"}
+
+# Endpoint for boost factor experimentation
+@app.post("/api/boost-experiment")
+async def boost_experiment(data: dict):
+    """
+    Experiment with different boost factors to test their impact on result ranking.
+    
+    This endpoint implements a simplified version of the proposed ADSBoostPipeline
+    that applies different boosts to search results and shows how they affect ranking.
+    """
+    try:
+        logger.info("Starting boost factor experiment")
+        
+        # Get input data
+        query = data.get("query")
+        original_results = data.get("results", [])
+        boost_config = data.get("boostConfig", {})
+        
+        if not original_results or len(original_results) == 0:
+            logger.warning("No results provided for boost experiment")
+            return {
+                "status": "error",
+                "message": "No results to process"
+            }
+            
+        logger.info(f"Processing {len(original_results)} results with boost configuration: {boost_config}")
+        
+        # Create a clean copy of results with original rank preserved
+        results_copy = []
+        for i, result in enumerate(original_results):
+            # Extract and clean necessary fields
+            clean_result = {
+                "title": str(result.get("title", "")),
+                "authors": result.get("authors", []),
+                "year": result.get("year", 0),
+                "pubyear": result.get("year", 0),  # Alias for calculations
+                "citations": result.get("citation_count", 0),
+                "originalRank": i + 1,
+                "source": str(result.get("source", "")),
+                "collection": result.get("collection", "general"),
+                "doctype": result.get("doctype", "article"),
+                "refereed": result.get("refereed", False),
+                "identifier": result.get("bibcode", "") or result.get("doi", "") or f"item-{i}",
+                "score": 1.0,  # Initialize with neutral score
+                "boostFactors": {}  # Store individual boosts for analysis
+            }
+            results_copy.append(clean_result)
+            
+        # Current date for recency calculations
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+        
+        # Apply boosts based on configuration
+        for result in results_copy:
+            # 1. Calculate citation boost if enabled
+            if boost_config.get("enableCiteBoost", True):
+                cite_weight = float(boost_config.get("citeBoostWeight", 1.0))
+                citations = float(result.get("citations", 0))
+                
+                # Simple citation boost - in real implementation this would use percentile
+                # based on collection and publication year
+                if citations > 0:
+                    # Log-scale boost to prevent highly-cited papers from dominating
+                    cite_boost = math.log10(1 + citations) * cite_weight / 2
+                    result["boostFactors"]["citeBoost"] = cite_boost
+                else:
+                    result["boostFactors"]["citeBoost"] = 0.0
+            
+            # 2. Calculate recency boost if enabled
+            if boost_config.get("enableRecencyBoost", True):
+                recency_weight = float(boost_config.get("recencyBoostWeight", 1.0))
+                recency_function = boost_config.get("recencyFunction", "inverse")
+                pubyear = result.get("pubyear")
+                
+                if pubyear and pubyear > 0:
+                    # Calculate age in months (approximate)
+                    age_years = current_year - pubyear
+                    age_months = age_years * 12 + current_month
+                    
+                    # Apply different recency functions
+                    recency_boost = 0.0
+                    
+                    if recency_function == "inverse":
+                        # Inverse function: 1/(1 + m*age)
+                        multiplier = float(boost_config.get("recencyMultiplier", 0.05))
+                        recency_boost = 1.0 / (1.0 + multiplier * age_months)
+                        
+                    elif recency_function == "exponential":
+                        # Exponential decay: e^(-m*age)
+                        multiplier = float(boost_config.get("recencyMultiplier", 0.01))
+                        recency_boost = math.exp(-multiplier * age_months)
+                        
+                    elif recency_function == "linear":
+                        # Linear decay: max(1 - m*age, 0)
+                        multiplier = float(boost_config.get("recencyMultiplier", 0.005))
+                        recency_boost = max(1.0 - multiplier * age_months, 0.0)
+                        
+                    elif recency_function == "sigmoid":
+                        # Sigmoid function: 1/(1 + e^(m*(age-alpha)))
+                        multiplier = float(boost_config.get("recencyMultiplier", 0.1))
+                        midpoint = float(boost_config.get("recencyMidpoint", 36)) # 3 years
+                        recency_boost = 1.0 / (1.0 + math.exp(multiplier * (age_months - midpoint)))
+                    
+                    # Apply weight and normalize to avoid extreme values
+                    recency_boost = min(recency_boost * recency_weight, 2.0)
+                    result["boostFactors"]["recencyBoost"] = recency_boost
+                else:
+                    result["boostFactors"]["recencyBoost"] = 0.0
+            
+            # 3. Calculate doctype boost if enabled
+            if boost_config.get("enableDoctypeBoost", True):
+                doctype_weight = float(boost_config.get("doctypeBoostWeight", 1.0))
+                doctype = result.get("doctype", "").lower()
+                
+                # Simplified doctype ranking
+                doctype_ranks = {
+                    "article": 1,
+                    "book": 2,
+                    "inproceedings": 3,
+                    "proceedings": 4,
+                    "inbook": 5,
+                    "thesis": 6,
+                    "misc": 7,
+                    "": 8  # Unknown type gets lowest rank
+                }
+                
+                rank = doctype_ranks.get(doctype, 8)
+                # Transform rank to a 0-1 boost factor
+                unique_ranks = len(doctype_ranks)
+                doctype_boost = 1.0 - ((rank - 1) / (unique_ranks - 1))
+                doctype_boost *= doctype_weight
+                
+                result["boostFactors"]["doctypeBoost"] = doctype_boost
+            
+            # 4. Calculate refereed boost if enabled
+            if boost_config.get("enableRefereedBoost", True):
+                refereed_weight = float(boost_config.get("refereedBoostWeight", 1.0))
+                refereed = result.get("refereed", False)
+                
+                refereed_boost = 1.0 if refereed else 0.0
+                refereed_boost *= refereed_weight
+                
+                result["boostFactors"]["refereedBoost"] = refereed_boost
+            
+            # 5. Combine all boosts
+            combination_method = boost_config.get("combinationMethod", "sum")
+            
+            boosts = list(result["boostFactors"].values())
+            
+            if combination_method == "sum":
+                # Simple sum of all boost factors
+                final_boost = sum(boosts)
+            elif combination_method == "product":
+                # Product of boost factors
+                final_boost = 1.0
+                for boost in boosts:
+                    final_boost *= (1.0 + boost)
+                final_boost -= 1.0  # Normalize so neutral is 0
+            elif combination_method == "weightedSum":
+                # Sum with global weights - already applied in individual boosts
+                final_boost = sum(boosts)
+            else:
+                # Default to sum
+                final_boost = sum(boosts)
+            
+            # Store the final boost
+            result["finalBoost"] = final_boost
+            result["score"] = 1.0 + final_boost  # Add 1 to avoid negative scores
+        
+        # Sort by final score
+        results_copy.sort(key=lambda x: x["score"], reverse=True)
+        
+        # Update ranks after sorting
+        for i, result in enumerate(results_copy):
+            result["newRank"] = i + 1
+            result["rankChange"] = result["originalRank"] - result["newRank"]
+        
+        # Return the results
+        return {
+            "results": results_copy,
+            "metadata": {
+                "query": query,
+                "boostConfig": boost_config,
+                "totalResults": len(results_copy)
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in boost experiment: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return {
+            "status": "error",
+            "message": f"Failed to process boost experiment: {str(e)}",
+            "results": []
+        }
 
 # If running directly, start the server
 if __name__ == "__main__":
