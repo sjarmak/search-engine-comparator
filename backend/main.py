@@ -1675,23 +1675,17 @@ async def boost_experiment(data: dict):
             
             # Extract year safely
             year = 0
-            try:
-                if result.get("year"):
-                    year = int(result.get("year"))
-                elif result.get("pubdate"):
-                    year_str = result.get("pubdate", "").split("-")[0]
-                    if year_str.isdigit():
-                        year = int(year_str)
-            except (ValueError, TypeError, IndexError):
-                logger.warning(f"Could not parse year for result {i}")
-                
+            if result.get("year"):
+                year = int(result.get("year"))
+            elif result.get("pubdate"):
+                year_str = result.get("pubdate", "").split("-")[0]
+                if year_str.isdigit():
+                    year = int(year_str)
+            
             # Extract citations safely
             citations = 0
-            try:
-                if result.get("citation_count"):
-                    citations = int(result.get("citation_count"))
-            except (ValueError, TypeError):
-                logger.warning(f"Could not parse citations for result {i}")
+            if result.get("citation_count"):
+                citations = int(result.get("citation_count"))
             
             # Check for refereed status in properties array
             property_array = result.get("property", [])
@@ -1702,28 +1696,16 @@ async def boost_experiment(data: dict):
             logger.info(f"Result {i} property array: {property_array}")
             
             # Determine refereed status
-            refereed = False
-            if property_array:
-                refereed = "refereed" in property_array
-                
-            # Additional check for refereed flag as a direct property
-            if not refereed and result.get("refereed") in (True, "true", "True", 1):
-                refereed = True
-                
+            refereed = "REFEREED" in property_array
+            
             # Extract doctype safely
-            doctype = "article"  # Default
-            if result.get("doctype"):
-                doctype = str(result.get("doctype"))
-            elif result.get("pub_type"):
-                doctype = str(result.get("pub_type"))
-            elif property_array:
-                if "Article" in property_array:
-                    doctype = "article"
-                elif "Thesis" in property_array:
-                    doctype = "thesis"
-                elif "Proceedings" in property_array:
-                    doctype = "proceedings"
-                    
+            doctype = result.get("doctype", "")
+            # Also check property array for document type hints
+            if not doctype and "ARTICLE" in property_array:
+                doctype = "article"
+            elif not doctype and "THESIS" in property_array:
+                doctype = "thesis"
+            
             clean_result = {
                 "title": str(result.get("title", "")),
                 "authors": result.get("authors", []),
