@@ -1669,16 +1669,33 @@ async def boost_experiment(data: dict):
             clean_result = {
                 "title": str(result.get("title", "")),
                 "authors": result.get("authors", []),
-                "year": result.get("year", 0),
-                "pubyear": result.get("year", 0),  # Alias for calculations
+                "year": result.get("year", 0) or result.get("pubdate", "").split("-")[0] if result.get("pubdate") else 0,
+                "pubyear": result.get("year", 0) or result.get("pubdate", "").split("-")[0] if result.get("pubdate") else 0,
                 "citations": result.get("citation_count", 0),
                 "originalRank": i + 1,
                 "source": str(result.get("source", "")),
                 "collection": result.get("collection", "general"),
-                "doctype": result.get("doctype", "article"),
-                # Check if 'property' array contains 'refereed'
+                
+                # Extract doctype properly - might be in different fields depending on the source
+                "doctype": (
+                    result.get("doctype", "") or 
+                    result.get("pub_type", "") or 
+                    ("article" if "Article" in result.get("property", []) else 
+                     "thesis" if "Thesis" in result.get("property", []) else
+                     "proceedings" if "Proceedings" in result.get("property", []) else
+                     "article")  # Default to article if we can't determine
+                ),
+                
+                # Check for refereed status in property array
                 "refereed": "refereed" in result.get("property", []),
-                "identifier": result.get("bibcode", "") or result.get("doi", "") or f"item-{i}",
+                
+                # Get the best possible identifier
+                "identifier": (
+                    result.get("bibcode", "") or 
+                    result.get("doi", "") or 
+                    result.get("identifier", "") or 
+                    f"item-{i}"
+                ),
                 "score": 1.0,  # Initialize with neutral score
                 "boostFactors": {}  # Store individual boosts for analysis
             }
