@@ -1681,10 +1681,28 @@ async def boost_experiment(data: dict):
                 if year_str.isdigit():
                     year = int(year_str)
             
-            # Extract citations safely
+            # Extract citations safely - try multiple possible field names
             citations = 0
-            if result.get("citation_count") and str(result.get("citation_count", "")).isdigit():
-                citations = int(result.get("citation_count"))
+            citation_fields = ["citation_count", "citations", "cited_by_count"]
+
+            for field in citation_fields:
+                if result.get(field) is not None:
+                    try:
+                        # Try direct integer conversion first
+                        if isinstance(result.get(field), int):
+                            citations = result.get(field)
+                            logger.info(f"Found citations in field '{field}' as integer: {citations}")
+                            break
+                        # Then try string conversion
+                        elif isinstance(result.get(field), str) and result.get(field).isdigit():
+                            citations = int(result.get(field))
+                            logger.info(f"Found citations in field '{field}' as string: {citations}")
+                            break
+                    except (ValueError, TypeError):
+                        pass
+
+            # Include citation count in log output to verify
+            logger.info(f"Final citation count for result {i}: {citations}")
             
             # Normalize property array
             property_array = result.get("property", [])
@@ -1736,10 +1754,10 @@ async def boost_experiment(data: dict):
             
             clean_result = {
                 "title": str(result.get("title", "")),
-                "authors": result.get("authors", []),
+                "authors": result.get("author", []) or result.get("authors", []), # Handle both possible field names
                 "year": year,
-                "pubyear": year,  # Use the same safely extracted year
-                "citations": citations,
+                "pubyear": year,
+                "citations": citations,  # Include the citations we extracted
                 "originalRank": i + 1,
                 "source": str(result.get("source", "")),
                 "collection": result.get("collection", "general"),
@@ -1825,101 +1843,102 @@ async def boost_experiment(data: dict):
             if boost_config.get("enableDoctypeBoost", True):
                 doctype_weight = float(boost_config.get("doctypeBoostWeight", 1.0))
                 
-                # Get document type
+                # Get document type from record
                 doctype = None
+                if "doctype" in result and result["doctype"]:
+                    doctype = result["doctype"].lower()
                 
-                # First try the explicit doctype field
-                if result.get("doctype"):
-                    doctype = str(result.get("doctype", "")).lower()
+                # Get normalized property array
+                property_array = []
+                if "property" in result:
+                    # Ensure we have a list of properties, even if it's a single string
+                    props = result["property"]
+                    if isinstance(props, str):
+                        property_array = [p.upper() for p in [props]]
+                    else:
+                        property_array = [p.upper() for p in props]
                 
-                # Check property array for document type hints
-                property_array = result.get("property", [])
-                if isinstance(property_array, str):
-                    property_array = [property_array]
+                # ADS standard doctype boosting
+                doctype_boost = 0.0
                 
-                # Look for specific doctype indicators in property array
-                property_to_doctype = {
-                    "ARTICLE": "article",
-                    "EPRINT": "eprint", 
-                    "INPROCEEDINGS": "inproceedings",
-                    "PROCEEDINGS": "proceedings",
-                    "BOOK": "book",
-                    "INBOOK": "inbook",
-                    "THESIS": "thesis",
-                    "PHDTHESIS": "phdthesis",
-                    "MASTERSTHESIS": "mastersthesis",
-                }
+                # Different boost values for different doctypes according to the Google spreadsheet
+                if doctype == "article" or "ARTICLE" in property_array:
+                    doctype_boost = 1.0
+                elif doctype == "eprint" or "EPRINT" in property_array:
+                    doctype_boost = 0.5
+                elif doctype in ["inproceedings", "inbook", "proceedings"]:
+                    doctype_boost = 0.3
+                elif doctype == "book" or "BOOK" in property_array:
+                    doctype_boost = 0.3
+                elif doctype in ["phdthesis", "mastersthesis"]:
+                    doctype_boost = 0.3
+                elif doctype == "software" or "SOFTWARE" in property_array:
+                    doctype_boost = 0.3
+                elif "NONARTICLE" in property_array:
+                    doctype_boost = 0.1
                 
-                # If we don't have doctype yet, try to infer from property
-                if not doctype:
-                    for prop, dtype in property_to_doctype.items():
-                        if prop in property_array:
-                            doctype = dtype
-                            break
-                
-                # If still no doctype, set a default
-                if not doctype:
-                    doctype = "article"  # Default assumption
-                
-                # Map to canonical doctype rankings
-                doctype_ranks = {
-                    "article": 1,       # Highest academic value
-                    "book": 2,
-                    "inbook": 2,
-                    "inproceedings": 3,
-                    "phdthesis": 4,
-                    "eprint": 5,
-                    "proceedings": 6,
-                    "mastersthesis": 7,
-                    "techreport": 8,
-                    "catalog": 9,
-                    "software": 10,
-                    "abstract": 11,
-                    "talk": 12,
-                    "bookreview": 13,
-                    "proposal": 14,
-                    "circular": 15,
-                    "newsletter": 16,
-                    "erratum": 17,
-                    "obituary": 18, 
-                    "pressrelease": 19,
-                    "misc": 20,
-                    "": 21              # Unknown type gets lowest rank
-                }
-                
-                rank = doctype_ranks.get(doctype, 21)
-                # Transform rank to a 0-1 boost factor
-                unique_ranks = len(doctype_ranks)
-                doctype_boost = 1.0 - ((rank - 1) / (unique_ranks - 1))
+                # Apply weight
                 doctype_boost *= doctype_weight
                 
                 result["boostFactors"]["doctypeBoost"] = doctype_boost
+                logger.info(f"Doctype boost for {result['identifier']}: {doctype_boost:.4f} (doctype: {doctype}, properties: {property_array})")
             
             # 4. Calculate refereed boost if enabled
             if boost_config.get("enableRefereedBoost", True):
                 refereed_weight = float(boost_config.get("refereedBoostWeight", 1.0))
                 
-                # Get property array (as normalized upper-case array)
-                property_array = result.get("property", [])
-                if isinstance(property_array, str):
-                    property_array = [property_array]
+                # Get property array if not already extracted
+                if 'property_array' not in locals() or not property_array:
+                    property_array = []
+                    if "property" in result:
+                        props = result["property"]
+                        if isinstance(props, str):
+                            property_array = [p.upper() for p in [props]]
+                        else:
+                            property_array = [p.upper() for p in props]
                 
-                # Convert all properties to uppercase for consistent matching
-                property_array = [p.upper() if isinstance(p, str) else p for p in property_array]
+                # Check if paper is refereed according to ADS standard properties
+                is_refereed = False
+                if "REFEREED" in property_array:
+                    is_refereed = True
+                elif "NOTREFEREED" in property_array:
+                    is_refereed = False
+                # For records that don't have explicit refereed status:
+                # Most articles, books, and some other doctypes are typically refereed
+                elif doctype in ["article", "book", "inbook"] and "NOTREFEREED" not in property_array:
+                    is_refereed = True
                 
-                # Check for explicit refereed status - this is binary, not probabilistic
-                is_refereed = "REFEREED" in property_array
+                # Store this for later use
+                result["refereed"] = is_refereed
                 
-                # Determine refereed boost (binary: either full boost or no boost)
-                if is_refereed:
-                    refereed_boost = 1.0
-                else:
-                    refereed_boost = 0.0
+                # Calculate boost
+                refereed_boost = 1.0 if is_refereed else 0.0
                 
                 # Apply weight
                 refereed_boost *= refereed_weight
                 
                 result["boostFactors"]["refereedBoost"] = refereed_boost
+                logger.info(f"Refereed boost for {result['identifier']}: {refereed_boost:.4f} (refereed: {is_refereed})")
+
+            # Additional boost for open access if desired
+            if boost_config.get("enableOpenAccessBoost", False):
+                oa_weight = float(boost_config.get("openAccessBoostWeight", 0.2))
+                
+                # Check for any openaccess property
+                is_oa = False
+                if "property_array" in locals() and property_array:
+                    oa_properties = ["OPENACCESS", "PUB_OPENACCESS", "EPRINT_OPENACCESS", "ADS_OPENACCESS", "AUTHOR_OPENACCESS"]
+                    for oa_prop in oa_properties:
+                        if oa_prop in property_array:
+                            is_oa = True
+                            break
+                
+                # Calculate boost
+                oa_boost = oa_weight if is_oa else 0.0
+                
+                if is_oa:
+                    result["boostFactors"]["openAccessBoost"] = oa_boost
+                    logger.info(f"Open Access boost for {result['identifier']}: {oa_boost:.4f}")
             
             # 5. Combine all boosts
             combination_method = boost_config.get("combinationMethod", "sum")
