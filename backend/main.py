@@ -1792,9 +1792,44 @@ async def boost_experiment(data: dict):
             # 3. Calculate doctype boost if enabled
             if boost_config.get("enableDoctypeBoost", True):
                 doctype_weight = float(boost_config.get("doctypeBoostWeight", 1.0))
-                doctype = str(result.get("doctype", "")).lower()
                 
-                # Enhanced doctype ranking based on ADS documentation
+                # Get document type
+                doctype = None
+                
+                # First try the explicit doctype field
+                if result.get("doctype"):
+                    doctype = str(result.get("doctype", "")).lower()
+                
+                # Check property array for document type hints
+                property_array = result.get("property", [])
+                if isinstance(property_array, str):
+                    property_array = [property_array]
+                
+                # Look for specific doctype indicators in property array
+                property_to_doctype = {
+                    "ARTICLE": "article",
+                    "EPRINT": "eprint", 
+                    "INPROCEEDINGS": "inproceedings",
+                    "PROCEEDINGS": "proceedings",
+                    "BOOK": "book",
+                    "INBOOK": "inbook",
+                    "THESIS": "thesis",
+                    "PHDTHESIS": "phdthesis",
+                    "MASTERSTHESIS": "mastersthesis",
+                }
+                
+                # If we don't have doctype yet, try to infer from property
+                if not doctype:
+                    for prop, dtype in property_to_doctype.items():
+                        if prop in property_array:
+                            doctype = dtype
+                            break
+                
+                # If still no doctype, set a default
+                if not doctype:
+                    doctype = "article"  # Default assumption
+                
+                # Map to canonical doctype rankings
                 doctype_ranks = {
                     "article": 1,       # Highest academic value
                     "book": 2,
@@ -1820,14 +1855,6 @@ async def boost_experiment(data: dict):
                     "": 21              # Unknown type gets lowest rank
                 }
                 
-                # Check property array for additional document type hints
-                property_array = result.get("property", [])
-                if isinstance(property_array, str):
-                    property_array = [property_array]
-                
-                if "ARTICLE" in property_array and not doctype:
-                    doctype = "article"
-                
                 rank = doctype_ranks.get(doctype, 21)
                 # Transform rank to a 0-1 boost factor
                 unique_ranks = len(doctype_ranks)
@@ -1840,39 +1867,22 @@ async def boost_experiment(data: dict):
             if boost_config.get("enableRefereedBoost", True):
                 refereed_weight = float(boost_config.get("refereedBoostWeight", 1.0))
                 
-                # Primary check: Look for REFEREED in property array
+                # Get property array (as normalized upper-case array)
                 property_array = result.get("property", [])
                 if isinstance(property_array, str):
                     property_array = [property_array]
                 
-                explicitly_refereed = "REFEREED" in property_array
-                explicitly_nonrefereed = "NOTREFEREED" in property_array
+                # Convert all properties to uppercase for consistent matching
+                property_array = [p.upper() if isinstance(p, str) else p for p in property_array]
                 
-                # Document type based refereed likelihood
-                doctype = str(result.get("doctype", "")).lower()
+                # Check for explicit refereed status - this is binary, not probabilistic
+                is_refereed = "REFEREED" in property_array
                 
-                # Doctype-based refereed likelihood (when not explicitly marked)
-                doctype_refereed_likelihood = {
-                    "article": 0.9,       # Most journal articles are refereed
-                    "book": 0.7,          # Books often undergo review
-                    "inbook": 0.7,        # Book chapters often reviewed
-                    "inproceedings": 0.6, # Conference papers may be refereed
-                    "phdthesis": 0.4,     # Theses undergo review but not traditional peer review
-                    "proceedings": 0.3,   # Conference proceedings as a whole aren't typically refereed
-                    "eprint": 0.2,        # Preprints aren't refereed by definition
-                    # Default likelihood for other types is 0
-                }
-                
-                # Determine refereed status and boost
-                if explicitly_refereed:
-                    # Explicitly marked as refereed
+                # Determine refereed boost (binary: either full boost or no boost)
+                if is_refereed:
                     refereed_boost = 1.0
-                elif explicitly_nonrefereed:
-                    # Explicitly marked as not refereed
-                    refereed_boost = 0.0
                 else:
-                    # Use doctype to estimate refereed likelihood
-                    refereed_boost = doctype_refereed_likelihood.get(doctype, 0.0)
+                    refereed_boost = 0.0
                 
                 # Apply weight
                 refereed_boost *= refereed_weight
