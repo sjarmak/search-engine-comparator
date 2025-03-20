@@ -405,19 +405,25 @@ def calculate_rank_based_overlap(list1, list2, p=0.98):
         for item in list1:
             if isinstance(item, dict):
                 titles1.append(item.get('title', '').lower().strip())
-            elif hasattr(item, 'title'):
-                titles1.append(item.title.lower().strip())
             else:
-                titles1.append(str(item).lower().strip())
+                # Get the title attribute value first, then process it
+                title_value = getattr(item, 'title', '')
+                # Check if it's a callable (method)
+                if callable(title_value):
+                    title_value = title_value()
+                titles1.append(str(title_value).lower().strip())
                 
         titles2 = []
         for item in list2:
             if isinstance(item, dict):
                 titles2.append(item.get('title', '').lower().strip())
-            elif hasattr(item, 'title'):
-                titles2.append(item.title.lower().strip())
             else:
-                titles2.append(str(item).lower().strip())
+                # Get the title attribute value first, then process it
+                title_value = getattr(item, 'title', '')
+                # Check if it's a callable (method)
+                if callable(title_value):
+                    title_value = title_value()
+                titles2.append(str(title_value).lower().strip())
         
         # If either list is empty, return 0
         if not titles1 or not titles2:
@@ -439,7 +445,6 @@ def calculate_rank_based_overlap(list1, list2, p=0.98):
         
     except Exception as e:
         logger.error(f"Error calculating rank-biased overlap: {e}")
-        import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         return 0.0
 
