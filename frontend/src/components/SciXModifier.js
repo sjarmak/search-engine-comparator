@@ -46,6 +46,12 @@ const SciXModifier = ({ originalResults, query }) => {
     setError(null);
     
     try {
+      console.log("Sending modification request with:", {
+        query,
+        results: originalResults,
+        modifications
+      });
+      
       const response = await fetch('/api/modify-scix', {
         method: 'POST',
         headers: {
@@ -62,8 +68,21 @@ const SciXModifier = ({ originalResults, query }) => {
         throw new Error(`Error: ${response.status} ${response.statusText}`);
       }
       
-      const data = await response.json();
-      setModifiedResults(data.modifiedResults);
+      // Try/catch for JSON parsing specifically
+      let data;
+      try {
+        const text = await response.text();
+        console.log("Raw response:", text);
+        data = JSON.parse(text);
+      } catch (jsonError) {
+        throw new Error(`JSON parsing error: ${jsonError.message}`);
+      }
+      
+      console.log("Received data:", data);
+      
+      // Handle both possible response structures
+      const results = data.modifiedResults || data.results || [];
+      setModifiedResults(results);
     } catch (err) {
       setError(`Failed to modify results: ${err.message}`);
     } finally {
@@ -233,36 +252,39 @@ const SciXModifier = ({ originalResults, query }) => {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {modifiedResults.map((result) => (
-                      <TableRow 
-                        key={result.rank}
-                        sx={{
-                          backgroundColor: result.boosted ? 'rgba(125, 212, 125, 0.1)' : 'inherit'
-                        }}
-                      >
-                        <TableCell>{result.originalRank || result.rank}</TableCell>
-                        <TableCell>{result.newRank}</TableCell>
-                        <TableCell>
-                          {formatRankChange(
-                            result.originalRank || result.rank, 
-                            result.newRank
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2">{result.title}</Typography>
-                        </TableCell>
-                        <TableCell>{result.year || '—'}</TableCell>
-                        <TableCell>
-                          {result.boosted ? (
-                            <Chip 
-                              label="Boosted" 
-                              size="small" 
-                              color="success" 
-                            />
-                          ) : '—'}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {modifiedResults.map((result, index) => {
+                      // Handle both newRank and rank naming conventions
+                      const newRank = result.newRank || result.rank;
+                      const origRank = result.originalRank || result.rank;
+                      
+                      return (
+                        <TableRow 
+                          key={index}
+                          sx={{
+                            backgroundColor: result.boosted ? 'rgba(125, 212, 125, 0.1)' : 'inherit'
+                          }}
+                        >
+                          <TableCell>{origRank}</TableCell>
+                          <TableCell>{newRank}</TableCell>
+                          <TableCell>
+                            {formatRankChange(origRank, newRank)}
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2">{result.title}</Typography>
+                          </TableCell>
+                          <TableCell>{result.year || '—'}</TableCell>
+                          <TableCell>
+                            {result.boosted ? (
+                              <Chip 
+                                label="Boosted" 
+                                size="small" 
+                                color="success" 
+                              />
+                            ) : '—'}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </TableContainer>
