@@ -35,6 +35,7 @@ from contextlib import contextmanager
 import rbo
 from datetime import datetime
 import traceback
+from utils.ads_utils import get_citation_count
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
@@ -1681,28 +1682,49 @@ async def boost_experiment(data: dict):
                 if year_str.isdigit():
                     year = int(year_str)
             
-            # Extract citations safely - try multiple possible field names
+            # Improved citation extraction
             citations = 0
-            citation_fields = ["citation_count", "citations", "cited_by_count"]
+            citation_fields = ["citation_count", "citations", "cited_by_count", "citationCount", "n_citation"]  # Add all possible field names
 
+            # First, try the standard fields
             for field in citation_fields:
                 if result.get(field) is not None:
                     try:
-                        # Try direct integer conversion first
+                        # Try integer
                         if isinstance(result.get(field), int):
                             citations = result.get(field)
                             logger.info(f"Found citations in field '{field}' as integer: {citations}")
                             break
-                        # Then try string conversion
-                        elif isinstance(result.get(field), str) and result.get(field).isdigit():
+                        # Try string to int
+                        elif isinstance(result.get(field), str):
+                            # Clean the string (remove non-numeric chars)
+                            clean_str = ''.join(c for c in result.get(field) if c.isdigit())
+                            if clean_str:
+                                citations = int(clean_str)
+                                logger.info(f"Found citations in field '{field}' as string: {citations}")
+                                break
+                        # Try float to int
+                        elif isinstance(result.get(field), float):
                             citations = int(result.get(field))
-                            logger.info(f"Found citations in field '{field}' as string: {citations}")
+                            logger.info(f"Found citations in field '{field}' as float: {citations}")
                             break
-                    except (ValueError, TypeError):
-                        pass
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Error converting citation from {field}: {str(e)}")
 
-            # Include citation count in log output to verify
-            logger.info(f"Final citation count for result {i}: {citations}")
+            # If still no citations and we have a bibcode, try direct ADS API call
+            if citations == 0 and result.get("bibcode"):
+                try:
+                    bibcode = result.get("bibcode")
+                    logger.info(f"Attempting to fetch citation count directly from ADS API for {bibcode}")
+                    api_citations = get_citation_count(bibcode)
+                    if api_citations is not None:
+                        citations = api_citations
+                        logger.info(f"Retrieved {citations} citations from ADS API for {bibcode}")
+                except Exception as e:
+                    logger.warning(f"Error fetching citations from ADS API: {str(e)}")
+
+            # Log final citation result
+            logger.info(f"Final citation count: {citations}")
             
             # Normalize property array
             property_array = result.get("property", [])
@@ -1715,18 +1737,34 @@ async def boost_experiment(data: dict):
             # A debug log to see the actual property array after normalization
             logger.info(f"Result {i} property array (normalized): {property_array}")
             
-            # Get document type - be more thorough in extraction
+            # Improved doctype extraction
             doctype = None
-            
-            # First try the explicit doctype field
-            if result.get("doctype"):
-                doctype = str(result.get("doctype", "")).lower()
-                logger.info(f"Found doctype field: {doctype}")
-            
-            # Look for specific doctype indicators in property array
+
+            # Try explicit doctype fields with various names
+            doctype_fields = ["doctype", "type", "document_type", "documentType"]
+            for field in doctype_fields:
+                if result.get(field):
+                    doctype = str(result.get(field)).lower()
+                    logger.info(f"Found doctype in field '{field}': {doctype}")
+                    break
+
+            # Normalize property array to uppercase for consistent matching
+            property_array = []
+            property_fields = ["property", "properties", "doctype_properties"]
+            for field in property_fields:
+                if result.get(field):
+                    props = result.get(field)
+                    if props:
+                        if isinstance(props, str):
+                            property_array.append(props.upper())
+                        elif isinstance(props, list):
+                            property_array.extend([p.upper() if isinstance(p, str) else str(p).upper() for p in props])
+                        logger.info(f"Found properties in field '{field}': {property_array[:5]}...")
+
+            # Map of ADS property codes to doctypes
             property_to_doctype = {
                 "ARTICLE": "article",
-                "EPRINT": "eprint", 
+                "EPRINT": "eprint",
                 "INPROCEEDINGS": "inproceedings",
                 "PROCEEDINGS": "proceedings",
                 "BOOK": "book",
@@ -1734,20 +1772,28 @@ async def boost_experiment(data: dict):
                 "THESIS": "thesis",
                 "PHDTHESIS": "phdthesis",
                 "MASTERSTHESIS": "mastersthesis",
+                "SOFTWARE": "software"
             }
-            
-            # If we don't have doctype yet, try to infer from property
+
+            # If no doctype yet, try to infer from properties
             if not doctype:
                 for prop, dtype in property_to_doctype.items():
                     if prop in property_array:
                         doctype = dtype
-                        logger.info(f"Inferred doctype from property: {doctype}")
+                        logger.info(f"Inferred doctype from property {prop}: {doctype}")
                         break
-            
-            # If still no doctype, set a default
+
+            # If still no doctype, use fallback
             if not doctype:
-                doctype = "article"  # Default assumption
-                logger.info("No doctype found, defaulting to 'article'")
+                # Try to infer from title or source
+                if result.get("title") and ("proceedings" in str(result.get("title")).lower() or 
+                                          "conference" in str(result.get("title")).lower()):
+                    doctype = "inproceedings"
+                elif result.get("source") and ("arxiv" in str(result.get("source")).lower()):
+                    doctype = "eprint"
+                else:
+                    doctype = "article"  # Default fallback
+                logger.info(f"Using fallback doctype: {doctype}")
             
             # Determine refereed status
             is_refereed = "REFEREED" in property_array
@@ -1990,6 +2036,110 @@ async def boost_experiment(data: dict):
             "status": "error",
             "message": f"Failed to process boost experiment: {str(e)}",
             "results": []
+        }
+
+# Add this new endpoint to main.py for debugging
+@app.post("/api/debug-metadata")
+async def debug_metadata(data: dict):
+    """
+    Debug endpoint to analyze the metadata content of search results.
+    This helps identify how to properly extract citations and document types.
+    """
+    try:
+        # Get the results
+        results = data.get("results", [])
+        
+        if not results:
+            return {"status": "error", "message": "No results provided"}
+        
+        # Analysis container
+        analysis = {
+            "total_records": len(results),
+            "field_stats": {},
+            "citation_fields": {},
+            "doctype_fields": {},
+            "property_fields": {},
+            "sample_records": []
+        }
+        
+        # Analyze field presence
+        all_field_names = set()
+        citation_field_names = ["citation_count", "citations", "cited_by_count", "citationCount"]
+        doctype_field_names = ["doctype", "type", "document_type", "documentType"]
+        property_field_names = ["property", "properties", "doctype_properties"]
+        
+        for result in results:
+            # Collect all field names
+            for field in result.keys():
+                all_field_names.add(field)
+                
+                # Track citation fields
+                if field in citation_field_names:
+                    if field not in analysis["citation_fields"]:
+                        analysis["citation_fields"][field] = {
+                            "count": 0,
+                            "examples": []
+                        }
+                    analysis["citation_fields"][field]["count"] += 1
+                    if len(analysis["citation_fields"][field]["examples"]) < 3:
+                        analysis["citation_fields"][field]["examples"].append(str(result[field]))
+                
+                # Track doctype fields
+                if field in doctype_field_names:
+                    if field not in analysis["doctype_fields"]:
+                        analysis["doctype_fields"][field] = {
+                            "count": 0,
+                            "examples": []
+                        }
+                    analysis["doctype_fields"][field]["count"] += 1
+                    if len(analysis["doctype_fields"][field]["examples"]) < 3:
+                        analysis["doctype_fields"][field]["examples"].append(str(result[field]))
+                
+                # Track property fields
+                if field in property_field_names:
+                    if field not in analysis["property_fields"]:
+                        analysis["property_fields"][field] = {
+                            "count": 0,
+                            "examples": []
+                        }
+                    analysis["property_fields"][field]["count"] += 1
+                    if len(analysis["property_fields"][field]["examples"]) < 3:
+                        value = result[field]
+                        if isinstance(value, list):
+                            example = str(value[:5]) + ("..." if len(value) > 5 else "")
+                        else:
+                            example = str(value)
+                        analysis["property_fields"][field]["examples"].append(example)
+        
+        # Field presence stats
+        for field in all_field_names:
+            count = sum(1 for r in results if field in r)
+            analysis["field_stats"][field] = {
+                "count": count,
+                "percentage": round(count / len(results) * 100, 1)
+            }
+        
+        # Add a few sample records for direct inspection
+        for i, result in enumerate(results[:3]):
+            analysis["sample_records"].append({
+                "index": i,
+                "data": result
+            })
+        
+        return {
+            "status": "success",
+            "analysis": analysis,
+            "advice": {
+                "citation_fields": "Check which citation fields are present and their format",
+                "doctype_fields": "Check which doctype fields are present and their format",
+                "property_fields": "Check which property fields contain metadata for boosting"
+            }
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error analyzing metadata: {str(e)}"
         }
 
 # If running directly, start the server
