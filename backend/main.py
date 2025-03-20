@@ -1626,57 +1626,108 @@ async def compare_search_results(request: SearchRequest):
 # Endpoint to modify SciX ranking
 @app.post("/api/modify-scix")
 async def modify_scix_ranking(data: dict):
-     """
-     Apply custom modifications to SciX ranking and return re-ranked results.
-     """
-     query = data.get("query")
-     original_results = data.get("results", [])
-     modifications = data.get("modifications", {})
- 
-     if not query or not original_results:
-         raise HTTPException(status_code=400, detail="Query and original results are required")
- 
-     # Apply modifications (example implementation)
-     modified_results = original_results.copy()
- 
-     # Example: Boost papers with specific keywords in title
-     if "titleKeywords" in modifications and modifications["titleKeywords"]:
-         keywords = modifications["titleKeywords"].lower().split(",")
-         boost_factor = float(modifications.get("keywordBoostFactor", 1.5))
- 
-         for result in modified_results:
-             title = result.get("title", "").lower()
-             for keyword in keywords:
-                 if keyword.strip() in title:
-                     result["boosted"] = True
-                     result["originalRank"] = result["rank"]
-                     result["rank"] = result["rank"] / boost_factor
- 
-     # Example: Boost recent papers
-     if "boostRecent" in modifications and modifications["boostRecent"]:
-         recency_factor = float(modifications.get("recencyFactor", 1.2))
-         current_year = 2023  # This should be updated or obtained dynamically
- 
-         for result in modified_results:
-             if "year" in result and result["year"]:
-                 age = current_year - result["year"]
-                 if age <= 5:  # Papers from the last 5 years
-                     result["boosted"] = True
-                     result["originalRank"] = result.get("originalRank", result["rank"])
-                     result["rank"] = result["rank"] / (recency_factor * (1 - age/10))
- 
-     # Sort by new rank
-     modified_results.sort(key=lambda x: x["rank"])
- 
-     # Update ranks after sorting
-     for i, result in enumerate(modified_results):
-         result["newRank"] = i + 1
- 
-     return {
-         "originalResults": original_results,
-         "modifiedResults": modified_results,
-         "modifications": modifications
-     }
+    """
+    Apply custom modifications to SciX ranking and return re-ranked results.
+    """
+    try:
+        logger.info("Starting SciX ranking modification")
+        query = data.get("query")
+        original_results = data.get("results", [])
+        modifications = data.get("modifications", {})
+        
+        logger.info(f"Request received: query={query}, results_count={len(original_results)}")
+        
+        if not query or not original_results:
+            raise HTTPException(status_code=400, detail="Query and original results are required")
+            
+        # Create a clean copy of results to modify
+        try:
+            modified_results = []
+            for r in original_results:
+                # Create a clean dictionary with explicit string conversion for text fields
+                result_copy = {
+                    "title": str(r.get("title", "")),
+                    "authors": r.get("authors", []),
+                    "year": r.get("year"),
+                    "url": str(r.get("url", "")),
+                    "abstract": str(r.get("abstract", "")) if "abstract" in r else "",
+                    "doi": str(r.get("doi", "")) if "doi" in r else "",
+                    "rank": int(r.get("rank")) if r.get("rank") is not None else 999,
+                    "source": str(r.get("source", ""))
+                }
+                modified_results.append(result_copy)
+        except Exception as e:
+            logger.error(f"Error copying results: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error processing input data: {str(e)}")
+
+        # Track which results were modified
+        modified_count = 0
+        current_year = datetime.now().year
+        
+        # Apply keyword boost
+        if "titleKeywords" in modifications and modifications["titleKeywords"]:
+            keywords = [k.strip().lower() for k in modifications["titleKeywords"].split(",")]
+            boost_factor = float(modifications.get("keywordBoostFactor", 1.5))
+            
+            for result in modified_results:
+                title = result["title"].lower()
+                if any(keyword in title for keyword in keywords):
+                    result["boosted"] = True
+                    result["originalRank"] = result["rank"]
+                    result["rank"] = float(result["rank"]) / boost_factor
+                    modified_count += 1
+        
+        # Apply recency boost
+        if modifications.get("boostRecent"):
+            recency_factor = float(modifications.get("recencyFactor", 1.2))
+            
+            for result in modified_results:
+                year = result.get("year")
+                if year is not None:
+                    try:
+                        year_value = int(float(str(year)))
+                        age = current_year - year_value
+                        if age <= 5:  # Papers from last 5 years
+                            result["boosted"] = True
+                            result["originalRank"] = result.get("originalRank", result["rank"])
+                            result["rank"] = float(result["rank"]) / (recency_factor * (1 - age/10))
+                            modified_count += 1
+                    except (ValueError, TypeError):
+                        # Skip if year cannot be converted to int
+                        continue
+        
+        # Sort by new rank
+        modified_results.sort(key=lambda x: float(x["rank"]))
+        
+        # Update ranks after sorting
+        for i, result in enumerate(modified_results, 1):
+            result["newRank"] = i
+        
+        # Test JSON serialization before returning
+        response_data = {
+            "modifiedResults": modified_results,
+            "metadata": {
+                "modifiedCount": modified_count,
+                "totalResults": len(modified_results)
+            }
+        }
+        
+        try:
+            # Test serialize to JSON to catch errors early
+            json_str = json.dumps(response_data)
+            logger.info(f"Response serialized successfully ({len(json_str)} bytes)")
+            return response_data
+        except Exception as json_err:
+            logger.error(f"JSON serialization error: {str(json_err)}")
+            raise HTTPException(status_code=500, detail=f"Error serializing response: {str(json_err)}")
+            
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Error in modify_scix_ranking: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to modify results: {str(e)}")
 
 # Root endpoint for API status check
 @app.get("/")
