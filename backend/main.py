@@ -1626,92 +1626,57 @@ async def compare_search_results(request: SearchRequest):
 # Endpoint to modify SciX ranking
 @app.post("/api/modify-scix")
 async def modify_scix_ranking(data: dict):
-    """
-    Apply custom modifications to SciX ranking and return re-ranked results.
-    """
-    try:
-        query = data.get("query")
-        original_results = data.get("results", [])
-        modifications = data.get("modifications", {})
-        
-        if not query or not original_results:
-            raise HTTPException(status_code=400, detail="Query and original results are required")
-        
-        # Create a simple copy of results with only the needed fields
-        modified_results = []
-        for r in original_results:
-            simple_result = {
-                "title": r.get("title", ""),
-                "authors": r.get("authors", []),
-                "abstract": r.get("abstract", ""),
-                "year": r.get("year"),
-                "url": r.get("url", ""),
-                "source": r.get("source", ""),
-                "rank": r.get("rank"),
-                "doi": r.get("doi", "")
-            }
-            modified_results.append(simple_result)
-        
-        # Track which results were modified
-        modified_count = 0
-        current_year = datetime.now().year
-        
-        # Apply keyword boost
-        if "titleKeywords" in modifications and modifications["titleKeywords"]:
-            keywords = [k.strip().lower() for k in modifications["titleKeywords"].split(",")]
-            boost_factor = float(modifications.get("keywordBoostFactor", 1.5))
-            
-            for result in modified_results:
-                title = str(result.get("title", "")).lower()
-                if any(keyword in title for keyword in keywords):
-                    result["boosted"] = True
-                    result["originalRank"] = result["rank"]
-                    result["rank"] = float(result["rank"]) / boost_factor
-                    modified_count += 1
-        
-        # Apply recency boost
-        if modifications.get("boostRecent"):
-            recency_factor = float(modifications.get("recencyFactor", 1.2))
-            
-            for result in modified_results:
-                year = result.get("year")
-                if year:
-                    try:
-                        year_int = int(year)
-                        age = current_year - year_int
-                        if age <= 5:  # Papers from last 5 years
-                            result["boosted"] = True
-                            result["originalRank"] = result.get("originalRank", result["rank"])
-                            result["rank"] = float(result["rank"]) / (recency_factor * (1 - age/10))
-                            modified_count += 1
-                    except (ValueError, TypeError):
-                        pass
-        
-        # Sort by new rank - handle missing or non-numeric ranks
-        for result in modified_results:
-            if "rank" not in result or result["rank"] is None:
-                result["rank"] = 9999  # Default high rank for sorting
-        
-        modified_results.sort(key=lambda x: float(x["rank"]))
-        
-        # Update ranks after sorting
-        for i, result in enumerate(modified_results, 1):
-            result["newRank"] = i
-        
-        # Construct simple response
-        response = {
-            "modifiedResults": modified_results,
-            "metadata": {
-                "modifiedCount": modified_count,
-                "totalResults": len(modified_results)
-            }
-        }
-        
-        return response
-        
-    except Exception as e:
-        logger.error(f"Error in modify_scix_ranking: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to modify results: {str(e)}")
+     """
+     Apply custom modifications to SciX ranking and return re-ranked results.
+     """
+     query = data.get("query")
+     original_results = data.get("results", [])
+     modifications = data.get("modifications", {})
+ 
+     if not query or not original_results:
+         raise HTTPException(status_code=400, detail="Query and original results are required")
+ 
+     # Apply modifications (example implementation)
+     modified_results = original_results.copy()
+ 
+     # Example: Boost papers with specific keywords in title
+     if "titleKeywords" in modifications and modifications["titleKeywords"]:
+         keywords = modifications["titleKeywords"].lower().split(",")
+         boost_factor = float(modifications.get("keywordBoostFactor", 1.5))
+ 
+         for result in modified_results:
+             title = result.get("title", "").lower()
+             for keyword in keywords:
+                 if keyword.strip() in title:
+                     result["boosted"] = True
+                     result["originalRank"] = result["rank"]
+                     result["rank"] = result["rank"] / boost_factor
+ 
+     # Example: Boost recent papers
+     if "boostRecent" in modifications and modifications["boostRecent"]:
+         recency_factor = float(modifications.get("recencyFactor", 1.2))
+         current_year = 2023  # This should be updated or obtained dynamically
+ 
+         for result in modified_results:
+             if "year" in result and result["year"]:
+                 age = current_year - result["year"]
+                 if age <= 5:  # Papers from the last 5 years
+                     result["boosted"] = True
+                     result["originalRank"] = result.get("originalRank", result["rank"])
+                     result["rank"] = result["rank"] / (recency_factor * (1 - age/10))
+ 
+     # Sort by new rank
+     modified_results.sort(key=lambda x: x["rank"])
+ 
+     # Update ranks after sorting
+     for i, result in enumerate(modified_results):
+         result["newRank"] = i + 1
+ 
+     return {
+         "originalResults": original_results,
+         "modifiedResults": modified_results,
+         "modifications": modifications
+     }
 
 # Root endpoint for API status check
 @app.get("/")
