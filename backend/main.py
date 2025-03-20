@@ -385,15 +385,14 @@ def calculate_jaccard_similarity(set1: set, set2: set) -> float:
     union = len(set1.union(set2))
     return intersection / union if union > 0 else 0.0
 
-def calculate_rank_based_overlap(list1, list2, p=0.9):
+def calculate_rank_based_overlap(list1, list2, p=0.98):
     """
     Calculate the rank-biased overlap between two lists.
     
     Args:
         list1: First list of results (SearchResult objects or dicts with 'title' keys)
         list2: Second list of results (SearchResult objects or dicts with 'title' keys)
-        p: The persistence parameter (default: 0.9), determines how strongly 
-           top-ranked items are weighted
+        p: The persistence parameter (default: 0.98, matching rbo library default)
     
     Returns:
         float: A score between 0 and 1, where 1 indicates identical rankings
@@ -420,15 +419,26 @@ def calculate_rank_based_overlap(list1, list2, p=0.9):
         
         # If either list is empty, return 0
         if not titles1 or not titles2:
+            logger.warning("Empty list passed to calculate_rank_based_overlap")
             return 0.0
+        
+        # Log the first few titles from each list for debugging
+        logger.info(f"List 1 titles (first 3): {titles1[:3]}")
+        logger.info(f"List 2 titles (first 3): {titles2[:3]}")
         
         # Calculate RBO using the imported library
         similarity = rbo.RankingSimilarity(titles1, titles2)
+        rbo_value = similarity.rbo()  # Using default p=0.98
         
-        # Return the RBO score with the specified persistence parameter
-        return similarity.rbo(p=p)
+        # Log the calculated RBO value
+        logger.info(f"RBO value: {rbo_value} (p={p})")
+        
+        return rbo_value
+        
     except Exception as e:
         logger.error(f"Error calculating rank-biased overlap: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return 0.0
 
 def calculate_cosine_similarity(vec1: Dict[str, int], vec2: Dict[str, int]) -> float:
