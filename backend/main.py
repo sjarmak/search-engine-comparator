@@ -1676,7 +1676,8 @@ async def boost_experiment(data: dict):
                 "source": str(result.get("source", "")),
                 "collection": result.get("collection", "general"),
                 "doctype": result.get("doctype", "article"),
-                "refereed": result.get("refereed", False),
+                # Check if 'property' array contains 'refereed'
+                "refereed": "refereed" in result.get("property", []),
                 "identifier": result.get("bibcode", "") or result.get("doi", "") or f"item-{i}",
                 "score": 1.0,  # Initialize with neutral score
                 "boostFactors": {}  # Store individual boosts for analysis
