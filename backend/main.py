@@ -1668,14 +1668,13 @@ async def boost_experiment(data: dict):
         # Create a clean copy of results with original rank preserved
         results_copy = []
         for i, result in enumerate(original_results):
-            # Extract and clean necessary fields
-            # First log the raw properties to see what we're working with
-            logger.info(f"Result {i} properties: {result.get('property', [])}")
-            logger.info(f"Result {i} doctype: {result.get('doctype', 'none')}")
+            # Log raw result for debugging
+            logger.info(f"Processing result {i+1}: {result.get('bibcode', 'no bibcode')} - {result.get('title', 'no title')}")
+            logger.info(f"Raw properties: {result}")
             
             # Extract year safely
             year = 0
-            if result.get("year"):
+            if result.get("year") and str(result.get("year", "")).isdigit():
                 year = int(result.get("year"))
             elif result.get("pubdate"):
                 year_str = result.get("pubdate", "").split("-")[0]
@@ -1684,27 +1683,56 @@ async def boost_experiment(data: dict):
             
             # Extract citations safely
             citations = 0
-            if result.get("citation_count"):
+            if result.get("citation_count") and str(result.get("citation_count", "")).isdigit():
                 citations = int(result.get("citation_count"))
             
-            # Check for refereed status in properties array
+            # Normalize property array
             property_array = result.get("property", [])
             if isinstance(property_array, str):
                 property_array = [property_array]
             
-            # A debug log to see the actual property array
-            logger.info(f"Result {i} property array: {property_array}")
+            # Convert all properties to uppercase for consistent matching
+            property_array = [p.upper() if isinstance(p, str) else p for p in property_array]
+            
+            # A debug log to see the actual property array after normalization
+            logger.info(f"Result {i} property array (normalized): {property_array}")
+            
+            # Get document type - be more thorough in extraction
+            doctype = None
+            
+            # First try the explicit doctype field
+            if result.get("doctype"):
+                doctype = str(result.get("doctype", "")).lower()
+                logger.info(f"Found doctype field: {doctype}")
+            
+            # Look for specific doctype indicators in property array
+            property_to_doctype = {
+                "ARTICLE": "article",
+                "EPRINT": "eprint", 
+                "INPROCEEDINGS": "inproceedings",
+                "PROCEEDINGS": "proceedings",
+                "BOOK": "book",
+                "INBOOK": "inbook",
+                "THESIS": "thesis",
+                "PHDTHESIS": "phdthesis",
+                "MASTERSTHESIS": "mastersthesis",
+            }
+            
+            # If we don't have doctype yet, try to infer from property
+            if not doctype:
+                for prop, dtype in property_to_doctype.items():
+                    if prop in property_array:
+                        doctype = dtype
+                        logger.info(f"Inferred doctype from property: {doctype}")
+                        break
+            
+            # If still no doctype, set a default
+            if not doctype:
+                doctype = "article"  # Default assumption
+                logger.info("No doctype found, defaulting to 'article'")
             
             # Determine refereed status
-            refereed = "REFEREED" in property_array
-            
-            # Extract doctype safely
-            doctype = result.get("doctype", "")
-            # Also check property array for document type hints
-            if not doctype and "ARTICLE" in property_array:
-                doctype = "article"
-            elif not doctype and "THESIS" in property_array:
-                doctype = "thesis"
+            is_refereed = "REFEREED" in property_array
             
             clean_result = {
                 "title": str(result.get("title", "")),
@@ -1716,7 +1744,7 @@ async def boost_experiment(data: dict):
                 "source": str(result.get("source", "")),
                 "collection": result.get("collection", "general"),
                 "doctype": doctype,
-                "refereed": refereed,
+                "refereed": is_refereed,
                 "identifier": (
                     result.get("bibcode", "") or 
                     result.get("doi", "") or 
@@ -1724,10 +1752,14 @@ async def boost_experiment(data: dict):
                     f"item-{i}"
                 ),
                 "score": 1.0,  # Initialize with neutral score
-                "boostFactors": {}  # Store individual boosts for analysis
+                "boostFactors": {},  # Store individual boosts for analysis
+                "property": property_array  # Store normalized property array for later use
             }
             results_copy.append(clean_result)
             
+            # Log the cleaned result
+            logger.info(f"Cleaned result: {clean_result['identifier']} - doctype: {clean_result['doctype']}, refereed: {clean_result['refereed']}, citations: {clean_result['citations']}")
+        
         # Current date for recency calculations
         current_year = datetime.now().year
         current_month = datetime.now().month
