@@ -390,25 +390,39 @@ def calculate_rank_based_overlap(list1, list2, p=0.9):
     Calculate the rank-biased overlap between two lists.
     
     Args:
-        list1: First list of results (expected to contain dict items with 'title' keys)
-        list2: Second list of results (expected to contain dict items with 'title' keys)
+        list1: First list of results (SearchResult objects or dicts with 'title' keys)
+        list2: Second list of results (SearchResult objects or dicts with 'title' keys)
         p: The persistence parameter (default: 0.9), determines how strongly 
            top-ranked items are weighted
     
     Returns:
         float: A score between 0 and 1, where 1 indicates identical rankings
     """
-    # Extract titles from the two lists to use as identifiers
-    titles1 = [item['title'].lower().strip() for item in list1]
-    titles2 = [item['title'].lower().strip() for item in list2]
-    
-    # If either list is empty, return 0
-    if not titles1 or not titles2:
-        return 0.0
-    
     try:
+        # Extract titles, handling both dictionary and object formats
+        titles1 = []
+        for item in list1:
+            if isinstance(item, dict):
+                titles1.append(item.get('title', '').lower().strip())
+            elif hasattr(item, 'title'):
+                titles1.append(item.title.lower().strip())
+            else:
+                titles1.append(str(item).lower().strip())
+                
+        titles2 = []
+        for item in list2:
+            if isinstance(item, dict):
+                titles2.append(item.get('title', '').lower().strip())
+            elif hasattr(item, 'title'):
+                titles2.append(item.title.lower().strip())
+            else:
+                titles2.append(str(item).lower().strip())
+        
+        # If either list is empty, return 0
+        if not titles1 or not titles2:
+            return 0.0
+        
         # Calculate RBO using the imported library
-        # The rbo.RankingSimilarity takes two lists and computes various metrics
         similarity = rbo.RankingSimilarity(titles1, titles2)
         
         # Return the RBO score with the specified persistence parameter
