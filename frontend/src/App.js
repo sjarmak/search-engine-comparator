@@ -10,6 +10,7 @@ import MetricsTable from './components/MetricsTable';
 import ResultsTable from './components/ResultsTable';
 import SideBySideComparison from './components/SideBySideComparison';
 import BoostExperiment from './components/BoostExperiment';
+import VisualizationComponent from './components/VisualizationComponent';
 
 const API_URL = process.env.REACT_APP_API_URL || 'https://search-engine-comparator.onrender.com';
 
@@ -247,7 +248,6 @@ function App() {
               <Tab label="Results" />
               <Tab label="Comparison" />
               <Tab label="Visualization" />
-              <Tab label="SciX Modifier" />
               <Tab label="Boost Experiment" />
             </Tabs>
             
@@ -268,20 +268,31 @@ function App() {
             
             <Box role="tabpanel" hidden={tabValue !== 2}>
               {tabValue === 2 && (
-                <ComparisonResults data={results} />
+                <div>
+                  <VisualizationComponent 
+                    data={results} 
+                    query={query} 
+                  />
+                  
+                  <Box mt={4}>
+                    <Typography variant="h6" gutterBottom>
+                      Overlap Visualization
+                    </Typography>
+                    {results && results.overlap && (
+                      <VennDiagram 
+                        data={results.overlap} 
+                        detailed={results.detailedOverlap}
+                      />
+                    )}
+                  </Box>
+                </div>
               )}
             </Box>
             
             <Box role="tabpanel" hidden={tabValue !== 3}>
               {tabValue === 3 && (
-                <VennDiagram data={results.overlap} />
-              )}
-            </Box>
-            
-            <Box role="tabpanel" hidden={tabValue !== 4}>
-              {tabValue === 4 && (
                 <BoostExperiment 
-                  originalResults={results.sourceResults.ads || []} 
+                  originalResults={results.sourceResults?.ads || []} 
                   query={query}
                 />
               )}
