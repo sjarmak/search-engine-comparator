@@ -1681,7 +1681,7 @@ async def modify_scix_ranking(data: dict):
             result["rank"] = i
         
         return {
-            "results": modified_results,
+            "modifiedResults": modified_results,
             "metadata": {
                 "modifiedCount": modified_count,
                 "totalResults": len(modified_results)
