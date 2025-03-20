@@ -12,6 +12,9 @@ import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import ReplayIcon from '@mui/icons-material/Replay';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 
+// Get API URL from environment or use default
+const API_URL = process.env.REACT_APP_API_URL || 'https://search-engine-comparator.onrender.com';
+
 /**
  * Component for experimenting with different boost factors and their impact on ranking
  * 
@@ -68,7 +71,8 @@ const BoostExperiment = ({ originalResults, query }) => {
     setError(null);
     
     try {
-      const response = await fetch('/api/boost-experiment', {
+      // Use the full API URL here instead of relative path
+      const response = await fetch(`${API_URL}/api/boost-experiment`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
