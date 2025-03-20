@@ -1645,84 +1645,85 @@ async def modify_scix_ranking(data: dict):
             try:
                 # Convert to dict if it's not already
                 result_dict = dict(r) if not isinstance(r, dict) else r.copy()
-                # Ensure all values are JSON serializable
-                for key, value in result_dict.items():
-                    if isinstance(value, (datetime, date)):
-                        result_dict[key] = value.isoformat()
-                modified_results.append(result_dict)
+                # Clean and validate each field
+                cleaned_dict = {
+                    "title": str(result_dict.get("title", "")),
+                    "authors": result_dict.get("authors", []),
+                    "abstract": str(result_dict.get("abstract", "")),
+                    "year": result_dict.get("year"),
+                    "url": str(result_dict.get("url", "")),
+                    "source": str(result_dict.get("source", "")),
+                    "rank": float(result_dict.get("rank", 0)),
+                    "doi": str(result_dict.get("doi", ""))
+                }
+                modified_results.append(cleaned_dict)
             except Exception as e:
                 logger.error(f"Error converting result to dict: {str(e)}")
                 continue
         
         # Track which results were modified
         modified_count = 0
-        
-        # Apply modifications based on configuration
         current_year = datetime.now().year
         
-        # Example: Boost papers with specific keywords in title
-        if "titleKeywords" in modifications and modifications["titleKeywords"]:
-            keywords = [k.strip().lower() for k in modifications["titleKeywords"].split(",")]
-            boost_factor = float(modifications.get("keywordBoostFactor", 1.5))
-            
-            for result in modified_results:
-                title = result.get("title", "").lower()
-                if any(keyword in title for keyword in keywords):
-                    result["boosted"] = True
-                    result["originalRank"] = result.get("rank", 0)
-                    result["rank"] = float(result.get("rank", 0)) / boost_factor
-                    modified_count += 1
-        
-        # Example: Boost recent papers
-        if modifications.get("boostRecent"):
-            recency_factor = float(modifications.get("recencyFactor", 1.2))
-            
-            for result in modified_results:
-                year = result.get("year")
-                if year and isinstance(year, (int, float, str)):
-                    try:
-                        year_int = int(float(str(year)))
-                        age = current_year - year_int
-                        if age <= 5:  # Papers from last 5 years
-                            result["boosted"] = True
-                            result["originalRank"] = result.get("originalRank", result.get("rank", 0))
-                            result["rank"] = float(result.get("rank", 0)) / (recency_factor * (1 - age/10))
-                            modified_count += 1
-                    except (ValueError, TypeError) as e:
-                        logger.warning(f"Error processing year value {year}: {str(e)}")
-                        continue
+        # Apply modifications
+        for result in modified_results:
+            try:
+                # Handle title keywords
+                if "titleKeywords" in modifications and modifications["titleKeywords"]:
+                    keywords = [k.strip().lower() for k in modifications["titleKeywords"].split(",")]
+                    boost_factor = float(modifications.get("keywordBoostFactor", 1.5))
+                    
+                    title = result["title"].lower()
+                    if any(keyword in title for keyword in keywords):
+                        result["boosted"] = True
+                        result["originalRank"] = result["rank"]
+                        result["rank"] = result["rank"] / boost_factor
+                        modified_count += 1
+                
+                # Handle recent papers boost
+                if modifications.get("boostRecent"):
+                    recency_factor = float(modifications.get("recencyFactor", 1.2))
+                    year = result.get("year")
+                    
+                    if year:
+                        try:
+                            year_int = int(float(str(year)))
+                            age = current_year - year_int
+                            if age <= 5:
+                                result["boosted"] = True
+                                result["originalRank"] = result.get("originalRank", result["rank"])
+                                result["rank"] = result["rank"] / (recency_factor * (1 - age/10))
+                                modified_count += 1
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Error processing year value {year}: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error modifying result: {str(e)}")
+                continue
         
         # Sort by new rank
-        modified_results.sort(key=lambda x: float(x.get("rank", float('inf'))))
+        modified_results.sort(key=lambda x: float(x["rank"]))
         
         # Update ranks after sorting
         for i, result in enumerate(modified_results, 1):
             result["rank"] = i
         
-        response_data = {
-            "results": modified_results,
-            "metadata": {
-                "modifiedCount": modified_count,
-                "totalResults": len(modified_results)
-            }
-        }
-        
-        # Verify JSON serialization before returning
+        # Verify JSON serialization
         try:
+            response_data = {
+                "results": modified_results,
+                "metadata": {
+                    "modifiedCount": modified_count,
+                    "totalResults": len(modified_results)
+                }
+            }
+            # Test JSON serialization before returning
             json.dumps(response_data)
+            return response_data
+            
         except Exception as e:
             logger.error(f"JSON serialization error: {str(e)}")
-            # Clean up non-serializable data
-            for result in modified_results:
-                for key, value in list(result.items()):
-                    try:
-                        json.dumps({key: value})
-                    except:
-                        logger.warning(f"Removing non-serializable value for key: {key}")
-                        result[key] = str(value)
-        
-        return response_data
-        
+            raise HTTPException(status_code=500, detail="Error serializing response")
+            
     except Exception as e:
         logger.error(f"Error in modify_scix_ranking: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
