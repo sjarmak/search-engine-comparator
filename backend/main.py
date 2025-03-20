@@ -33,6 +33,7 @@ import certifi
 import signal
 from contextlib import contextmanager
 import rbo
+from datetime import datetime
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
@@ -1621,55 +1622,78 @@ async def compare_search_results(request: SearchRequest):
 async def modify_scix_ranking(data: dict):
     """
     Apply custom modifications to SciX ranking and return re-ranked results.
+    
+    Args:
+        data: Dictionary containing:
+            - query: Original search query
+            - results: List of original results
+            - modifications: Dictionary of ranking modifications to apply
+            
+    Returns:
+        Dict containing modified results and metadata
     """
-    query = data.get("query")
-    original_results = data.get("results", [])
-    modifications = data.get("modifications", {})
-    
-    if not query or not original_results:
-        raise HTTPException(status_code=400, detail="Query and original results are required")
-    
-    # Apply modifications (example implementation)
-    modified_results = original_results.copy()
-    
-    # Example: Boost papers with specific keywords in title
-    if "titleKeywords" in modifications and modifications["titleKeywords"]:
-        keywords = modifications["titleKeywords"].lower().split(",")
-        boost_factor = float(modifications.get("keywordBoostFactor", 1.5))
+    try:
+        query = data.get("query")
+        original_results = data.get("results", [])
+        modifications = data.get("modifications", {})
         
-        for result in modified_results:
-            title = result.get("title", "").lower()
-            for keyword in keywords:
-                if keyword.strip() in title:
+        if not query or not original_results:
+            raise HTTPException(status_code=400, detail="Query and original results are required")
+        
+        # Create a copy of results to modify
+        modified_results = [dict(r) for r in original_results]
+        
+        # Track which results were modified
+        modified_count = 0
+        
+        # Apply modifications based on configuration
+        current_year = datetime.now().year
+        
+        # Example: Boost papers with specific keywords in title
+        if "titleKeywords" in modifications and modifications["titleKeywords"]:
+            keywords = [k.strip().lower() for k in modifications["titleKeywords"].split(",")]
+            boost_factor = float(modifications.get("keywordBoostFactor", 1.5))
+            
+            for result in modified_results:
+                title = result.get("title", "").lower()
+                if any(keyword in title for keyword in keywords):
                     result["boosted"] = True
                     result["originalRank"] = result["rank"]
                     result["rank"] = result["rank"] / boost_factor
-    
-    # Example: Boost recent papers
-    if "boostRecent" in modifications and modifications["boostRecent"]:
-        recency_factor = float(modifications.get("recencyFactor", 1.2))
-        current_year = 2023  # This should be updated or obtained dynamically
+                    modified_count += 1
         
-        for result in modified_results:
-            if "year" in result and result["year"]:
-                age = current_year - result["year"]
-                if age <= 5:  # Papers from the last 5 years
-                    result["boosted"] = True
-                    result["originalRank"] = result.get("originalRank", result["rank"])
-                    result["rank"] = result["rank"] / (recency_factor * (1 - age/10))
-    
-    # Sort by new rank
-    modified_results.sort(key=lambda x: x["rank"])
-    
-    # Update ranks after sorting
-    for i, result in enumerate(modified_results):
-        result["newRank"] = i + 1
-    
-    return {
-        "originalResults": original_results,
-        "modifiedResults": modified_results,
-        "modifications": modifications
-    }
+        # Example: Boost recent papers
+        if modifications.get("boostRecent"):
+            recency_factor = float(modifications.get("recencyFactor", 1.2))
+            
+            for result in modified_results:
+                year = result.get("year")
+                if year and isinstance(year, (int, float)):
+                    age = current_year - int(year)
+                    if age <= 5:  # Papers from last 5 years
+                        result["boosted"] = True
+                        result["originalRank"] = result.get("originalRank", result["rank"])
+                        result["rank"] = result["rank"] / (recency_factor * (1 - age/10))
+                        modified_count += 1
+        
+        # Sort by new rank
+        modified_results.sort(key=lambda x: float(x["rank"]))
+        
+        # Update ranks after sorting
+        for i, result in enumerate(modified_results, 1):
+            result["rank"] = i
+        
+        return {
+            "results": modified_results,
+            "metadata": {
+                "modifiedCount": modified_count,
+                "totalResults": len(modified_results)
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in modify_scix_ranking: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to modify results: {str(e)}")
 
 # Root endpoint for API status check
 @app.get("/")
