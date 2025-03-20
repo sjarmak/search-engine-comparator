@@ -1678,8 +1678,8 @@ async def modify_scix_ranking(data: dict):
         
         # Update ranks after sorting
         for i, result in enumerate(modified_results, 1):
-            result["rank"] = i
-        
+            result["newRank"] = i  # Changed from rank to newRank to match frontend
+            
         return {
             "modifiedResults": modified_results,
             "metadata": {
@@ -1690,6 +1690,7 @@ async def modify_scix_ranking(data: dict):
         
     except Exception as e:
         logger.error(f"Error in modify_scix_ranking: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to modify results: {str(e)}")
 
 # Root endpoint for API status check
