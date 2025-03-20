@@ -2117,6 +2117,72 @@ async def debug_metadata(data: dict):
             "message": f"Error analyzing metadata: {str(e)}"
         }
 
+# In your app routes, add a simple endpoint to see citation counts for debugging
+
+@app.post("/api/debug-citations")
+async def debug_citations(data: dict):
+    """
+    Debug endpoint to check citation counts for a list of results.
+    """
+    try:
+        results = data.get("results", [])
+        
+        if not results:
+            return {"status": "error", "message": "No results provided"}
+        
+        # Extract bibcodes
+        bibcodes = []
+        for result in results:
+            if result.get("bibcode"):
+                bibcodes.append(result.get("bibcode"))
+        
+        # Fetch citation counts from ADS
+        citation_data = {}
+        
+        if bibcodes:
+            ads_token = os.environ.get("ADS_API_TOKEN")
+            if ads_token:
+                # Process in batches
+                batch_size = 50
+                for i in range(0, len(bibcodes), batch_size):
+                    batch = bibcodes[i:i+batch_size]
+                    bibcode_query = "bibcode:(" + " OR ".join(batch) + ")"
+                    
+                    url = "https://api.adsabs.harvard.edu/v1/search/query"
+                    params = {
+                        "q": bibcode_query,
+                        "fl": "bibcode,citation_count",
+                        "rows": batch_size
+                    }
+                    headers = {
+                        "Authorization": f"Bearer {ads_token}"
+                    }
+                    
+                    response = requests.get(url, params=params, headers=headers)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        docs = data.get("response", {}).get("docs", [])
+                        
+                        for doc in docs:
+                            if doc.get("bibcode"):
+                                citation_data[doc["bibcode"]] = {
+                                    "citation_count": doc.get("citation_count", 0)
+                                }
+        
+        return {
+            "status": "success",
+            "total_results": len(results),
+            "bibcodes_found": len(bibcodes),
+            "citation_data": citation_data
+        }
+                
+    except Exception as e:
+        return {
+            "status": "error", 
+            "message": f"Error retrieving citation data: {str(e)}"
+        }
+
 # If running directly, start the server
 if __name__ == "__main__":
     import uvicorn
