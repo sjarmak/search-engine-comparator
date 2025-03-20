@@ -1794,19 +1794,41 @@ async def boost_experiment(data: dict):
                 doctype_weight = float(boost_config.get("doctypeBoostWeight", 1.0))
                 doctype = str(result.get("doctype", "")).lower()
                 
-                # Simplified doctype ranking
+                # Enhanced doctype ranking based on ADS documentation
                 doctype_ranks = {
-                    "article": 1,
+                    "article": 1,       # Highest academic value
                     "book": 2,
+                    "inbook": 2,
                     "inproceedings": 3,
-                    "proceedings": 4,
-                    "inbook": 5,
-                    "thesis": 6,
-                    "misc": 7,
-                    "": 8  # Unknown type gets lowest rank
+                    "phdthesis": 4,
+                    "eprint": 5,
+                    "proceedings": 6,
+                    "mastersthesis": 7,
+                    "techreport": 8,
+                    "catalog": 9,
+                    "software": 10,
+                    "abstract": 11,
+                    "talk": 12,
+                    "bookreview": 13,
+                    "proposal": 14,
+                    "circular": 15,
+                    "newsletter": 16,
+                    "erratum": 17,
+                    "obituary": 18, 
+                    "pressrelease": 19,
+                    "misc": 20,
+                    "": 21              # Unknown type gets lowest rank
                 }
                 
-                rank = doctype_ranks.get(doctype, 8)
+                # Check property array for additional document type hints
+                property_array = result.get("property", [])
+                if isinstance(property_array, str):
+                    property_array = [property_array]
+                
+                if "ARTICLE" in property_array and not doctype:
+                    doctype = "article"
+                
+                rank = doctype_ranks.get(doctype, 21)
                 # Transform rank to a 0-1 boost factor
                 unique_ranks = len(doctype_ranks)
                 doctype_boost = 1.0 - ((rank - 1) / (unique_ranks - 1))
@@ -1817,9 +1839,42 @@ async def boost_experiment(data: dict):
             # 4. Calculate refereed boost if enabled
             if boost_config.get("enableRefereedBoost", True):
                 refereed_weight = float(boost_config.get("refereedBoostWeight", 1.0))
-                refereed = result.get("refereed", False)
                 
-                refereed_boost = 1.0 if refereed else 0.0
+                # Primary check: Look for REFEREED in property array
+                property_array = result.get("property", [])
+                if isinstance(property_array, str):
+                    property_array = [property_array]
+                
+                explicitly_refereed = "REFEREED" in property_array
+                explicitly_nonrefereed = "NOTREFEREED" in property_array
+                
+                # Document type based refereed likelihood
+                doctype = str(result.get("doctype", "")).lower()
+                
+                # Doctype-based refereed likelihood (when not explicitly marked)
+                doctype_refereed_likelihood = {
+                    "article": 0.9,       # Most journal articles are refereed
+                    "book": 0.7,          # Books often undergo review
+                    "inbook": 0.7,        # Book chapters often reviewed
+                    "inproceedings": 0.6, # Conference papers may be refereed
+                    "phdthesis": 0.4,     # Theses undergo review but not traditional peer review
+                    "proceedings": 0.3,   # Conference proceedings as a whole aren't typically refereed
+                    "eprint": 0.2,        # Preprints aren't refereed by definition
+                    # Default likelihood for other types is 0
+                }
+                
+                # Determine refereed status and boost
+                if explicitly_refereed:
+                    # Explicitly marked as refereed
+                    refereed_boost = 1.0
+                elif explicitly_nonrefereed:
+                    # Explicitly marked as not refereed
+                    refereed_boost = 0.0
+                else:
+                    # Use doctype to estimate refereed likelihood
+                    refereed_boost = doctype_refereed_likelihood.get(doctype, 0.0)
+                
+                # Apply weight
                 refereed_boost *= refereed_weight
                 
                 result["boostFactors"]["refereedBoost"] = refereed_boost
