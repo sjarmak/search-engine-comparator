@@ -350,9 +350,9 @@ async def get_bibcode_from_doi(doi):
         
     try:
         # Get API token
-        ads_token = os.environ.get("ADS_API_TOKEN")
+        ads_token = os.environ.get("ADS_API_KEY")
         if not ads_token:
-            logger.warning("ADS_API_TOKEN not found, cannot fetch bibcode")
+            logger.warning("ADS_API_KEY not found, cannot fetch bibcode")
             return None
             
         # Query ADS API for the bibcode
@@ -1756,9 +1756,9 @@ async def boost_experiment(data: dict):
         
         if bibcodes:
             # Get API token
-            ads_token = os.environ.get("ADS_API_TOKEN")
+            ads_token = os.environ.get("ADS_API_KEY")
             if not ads_token:
-                logger.warning("ADS_API_TOKEN not found, using limited metadata")
+                logger.warning("ADS_API_KEY not found, using limited metadata")
             else:
                 try:
                     # Use ADS batch API to get metadata
@@ -2134,9 +2134,9 @@ async def debug_paper(doi: str):
             return {"status": "error", "message": f"Could not find bibcode for DOI: {doi}"}
             
         # Now fetch all metadata for this bibcode
-        ads_token = os.environ.get("ADS_API_TOKEN")
+        ads_token = os.environ.get("ADS_API_KEY")
         if not ads_token:
-            return {"status": "error", "message": "ADS_API_TOKEN not configured"}
+            return {"status": "error", "message": "ADS_API_KEY not configured"}
             
         url = "https://api.adsabs.harvard.edu/v1/search/query"
         params = {
@@ -2179,11 +2179,11 @@ async def debug_citation(bibcode: str):
         logger.info(f"Debug citation request for bibcode: {bibcode}")
         
         # Get API token
-        ads_token = os.environ.get("ADS_API_TOKEN")
+        ads_token = os.environ.get("ADS_API_KEY")
         if not ads_token:
             return {
                 "status": "error", 
-                "message": "ADS_API_TOKEN not found in environment variables"
+                "message": "ADS_API_KEY not found in environment variables"
             }
         
         # Make API call to ADS
@@ -2490,7 +2490,7 @@ async def debug_boost_fields(data: dict):
         bibcodes = [r.get("bibcode") for r in results[:5] if r.get("bibcode")]
         
         if bibcodes:
-            ads_token = os.environ.get("ADS_API_TOKEN")
+            ads_token = os.environ.get("ADS_API_KEY")
             if ads_token:
                 # Query ADS API directly for comparison
                 try:
@@ -2540,7 +2540,7 @@ async def debug_boost_fields(data: dict):
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint to verify API and environment variables"""
-    ads_token_configured = bool(os.environ.get("ADS_API_TOKEN"))
+    ads_token_configured = bool(os.environ.get("ADS_API_KEY"))
     
     return {
         "status": "healthy",
