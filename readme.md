@@ -1,6 +1,6 @@
 # Academic Search Results Comparison Tool
 
-A web-based tool for comparing search result similarities across multiple academic search indexers, including SciX, Google Scholar, Web of Science, and Semantic Scholar.
+A web-based tool for comparing search result similarities across multiple academic search indexers, including SciX, Google Scholar, Web of Science, and Semantic Scholar. The tool also includes advanced boosting algorithms for re-ranking search results based on citation counts, publication date, document type, and other scholarly metadata.
 
 NOTE: Web of Science is not yet configured in the current code. 
 
@@ -10,6 +10,12 @@ NOTE: Web of Science is not yet configured in the current code.
 - **Advanced Similarity Metrics**: Compare results using Jaccard similarity, rank-biased overlap, and more
 - **Visualization**: Interactive charts and Venn diagrams to visualize overlap and similarities
 - **SciX Ranking Modifier**: Experiment with modifications to SciX's ranking algorithm
+- **Citation-Based Boosting**: Promote highly-cited papers using configurable weights
+- **Recency Boosting**: Prioritize recent publications with adjustable decay functions
+- **Document Type Boosting**: Customize relevance by publication type (articles, reviews, etc.)
+- **Refereed Boosting**: Promote peer-reviewed content
+- **Open Access Boosting**: Highlight freely accessible research
+- **Enhanced Metadata**: Rich metadata for each result including citation counts and publication properties
 - **Flexible Metadata Comparison**: Configure which metadata fields to consider in comparisons
 - **Detailed Analysis**: View comprehensive tables and charts of comparison results
 
@@ -59,13 +65,17 @@ academic-search-comparator/
 │   │   │   ├── MetricsTable.js
 │   │   │   ├── ResultsTable.js
 │   │   │   ├── SciXModifier.js
-│   │   │   └── VennDiagram.js
+│   │   │   ├── VennDiagram.js
+│   │   │   └── BoostExperiment.js  # Ranking modification component
 │   │   ├── App.js          # Main application component
 │   │   └── index.js        # Entry point
 │   └── package.json        # Frontend dependencies
 │
 └── backend/                # FastAPI backend
     ├── main.py             # Main API implementation
+    ├── utils/              # Utility functions
+    │   ├── __init__.py
+    │   └── ads_utils.py    # ADS API utilities
     ├── fix_macos_certs.py  # macOS SSL certificate fix script
     └── requirements.txt    # Backend dependencies
 ```
@@ -110,6 +120,7 @@ scholarly
 beautifulsoup4
 certifi
 python-certifi-win32  # for Windows users
+requests
 ```
 
 3. Create a `.env` file in the backend directory with your API keys:
@@ -181,6 +192,13 @@ Google Scholar sometimes blocks automated access. If you encounter issues:
 2. Try different search terms to test functionality
 3. The application has fallback mechanisms to use alternative Google Scholar access methods
 
+### Citation Count Issues
+If citation counts aren't displaying properly:
+
+1. Verify your ADS API key is correctly set in the .env file
+2. Check the browser console for API errors
+3. Make sure the frontend is properly displaying the metadata section returned by the API
+
 ### Proxy Configuration
 If you need to use proxies for enhanced reliability:
 
@@ -204,6 +222,12 @@ If you need to use proxies for enhanced reliability:
 
 7. **Experiment with SciX Ranking**: In the SciX Modifier tab, adjust parameters to see how they affect the ranking of search results.
 
+8. **Apply Boost Algorithms**: Use the Boost Experiment tab to apply configurable boosts:
+   - Citation boost: Promote highly-cited papers
+   - Recency boost: Prioritize recent publications
+   - Document type boost: Customize relevance by publication type
+   - Refereed boost: Promote peer-reviewed content
+
 ## Advanced Usage
 
 ### Modifying SciX Ranking
@@ -216,12 +240,39 @@ The SciX Modifier tab allows you to experiment with different ranking parameters
 
 Apply modifications to see how they affect the ranked results compared to the original SciX ordering.
 
+### Configuring Boost Algorithms
+
+The Boost Experiment tab offers advanced configuration options:
+
+1. **Citation Boost**: Promote papers with high citation counts using logarithmic scaling.
+2. **Recency Boost**: Choose from different decay functions (exponential, inverse, linear, sigmoid).
+3. **Document Type Boost**: Assign different weights to articles, reviews, proceedings, etc.
+4. **Refereed Boost**: Promote peer-reviewed publications.
+5. **Open Access Boost**: Highlight freely accessible research.
+
+Adjust these parameters to find the optimal ranking algorithm for your specific needs.
+
 ## API Documentation
 
 The backend API is documented using FastAPI's automatic documentation. Once the backend server is running, visit:
 
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
+
+Key endpoints include:
+
+### `/api/compare`
+Compare search results from multiple sources with configurable metrics.
+
+### `/api/boost-experiment`
+Apply configurable boost factors to search results:
+- Citation boost based on citation counts
+- Recency boost with configurable decay functions
+- Document type boosting with custom weights
+- Refereed and open access boosting
+
+### `/api/debug-metadata`
+Debug endpoint to analyze the structure of result metadata.
 
 ## Adding New Data Sources
 
