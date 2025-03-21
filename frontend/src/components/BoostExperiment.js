@@ -4,16 +4,17 @@ import {
   Slider, FormControlLabel, Switch, Typography, FormControl,
   InputLabel, Select, MenuItem, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Paper, Chip, Divider,
-  CircularProgress, Alert, Tooltip, IconButton
+  CircularProgress, Alert, Tooltip, IconButton, Collapse
 } from '@mui/material';
 import InfoIcon from '@mui/icons-material/Info';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import ReplayIcon from '@mui/icons-material/Replay';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import BugReportIcon from '@mui/icons-material/BugReport';
 
 // Get API URL from environment or use default
-const API_URL = process.env.REACT_APP_API_URL || 'https://search-engine-comparator.onrender.com';
+const API_URL = process.env.REACT_APP_API_URL || 'https://search-engine-comparator-api.onrender.com';
 
 /**
  * Component for experimenting with different boost factors and their impact on ranking
@@ -26,6 +27,8 @@ const BoostExperiment = ({ originalResults, query }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [results, setResults] = useState(null);
+  const [debugMode, setDebugMode] = useState(false);
+  const [debugInfo, setDebugInfo] = useState(null);
   
   // Boost configuration state
   const [boostConfig, setBoostConfig] = useState({
@@ -36,8 +39,8 @@ const BoostExperiment = ({ originalResults, query }) => {
     // Recency boost
     enableRecencyBoost: true,
     recencyBoostWeight: 1.0,
-    recencyFunction: "inverse",
-    recencyMultiplier: 0.05,
+    recencyFunction: "exponential", // Changed to match backend default
+    recencyMultiplier: 0.01, // Changed to match backend default
     recencyMidpoint: 36,
     
     // Document type boost
@@ -69,8 +72,11 @@ const BoostExperiment = ({ originalResults, query }) => {
     
     setLoading(true);
     setError(null);
+    setDebugInfo(null);
     
     try {
+      console.log("Sending request to boost-experiment endpoint with config:", boostConfig);
+      
       // Use the full API URL here instead of relative path
       const response = await fetch(`${API_URL}/api/boost-experiment`, {
         method: 'POST',
@@ -102,8 +108,55 @@ const BoostExperiment = ({ originalResults, query }) => {
         throw new Error(data.message);
       }
       
-      setResults(data.results || []);
+      // Process and normalize the results
+      const processedResults = (data.results || []).map(result => {
+        // Ensure all required fields exist with fallbacks
+        return {
+          ...result,
+          newRank: result.rank,
+          rankChange: result.rankChange || 0,
+          citations: result.citations || result.citation_count || 0,
+          year: result.year || '',
+          // Ensure boost factors exist
+          finalBoost: result.totalBoost || 0,
+          // Add direct access to boost factors for tooltip display
+          boostFactors: {
+            ...result.boostFactors,
+            citeBoost: result.citeBoost || result.boostFactors?.citeBoost || 0,
+            recencyBoost: result.recencyBoost || result.boostFactors?.recencyBoost || 0,
+            doctypeBoost: result.doctypeBoost || result.boostFactors?.doctypeBoost || 0,
+            refereedBoost: result.refereedBoost || result.boostFactors?.refereedBoost || 0,
+          }
+        };
+      });
+      
+      console.log("Processed results:", processedResults);
+      setResults(processedResults);
+      
+      // Store debug info about the first result for debugging panel
+      if (processedResults.length > 0) {
+        const firstResult = processedResults[0];
+        setDebugInfo({
+          firstResult,
+          citationFields: {
+            citations: firstResult.citations,
+            citation_count: firstResult.citation_count,
+            citationCount: firstResult.citationCount,
+          },
+          boostFields: {
+            boostFactors: firstResult.boostFactors,
+            citeBoost: firstResult.citeBoost,
+            recencyBoost: firstResult.recencyBoost,
+            doctypeBoost: firstResult.doctypeBoost,
+            refereedBoost: firstResult.refereedBoost,
+            totalBoost: firstResult.totalBoost,
+            finalBoost: firstResult.finalBoost,
+          }
+        });
+      }
+      
     } catch (err) {
+      console.error("Error in boost experiment:", err);
       setError(`Failed to process boost experiment: ${err.message}`);
     } finally {
       setLoading(false);
@@ -144,8 +197,8 @@ const BoostExperiment = ({ originalResults, query }) => {
       citeBoostWeight: 1.0,
       enableRecencyBoost: true,
       recencyBoostWeight: 1.0,
-      recencyFunction: "inverse",
-      recencyMultiplier: 0.05,
+      recencyFunction: "exponential", // Changed to match backend default
+      recencyMultiplier: 0.01, // Changed to match backend default
       recencyMidpoint: 36,
       enableDoctypeBoost: true,
       doctypeBoostWeight: 1.0,
@@ -162,11 +215,114 @@ const BoostExperiment = ({ originalResults, query }) => {
     }
   }, []);
   
+  // Debug component to inspect fields and values
+  const renderDebugPanel = () => {
+    if (!debugInfo) return null;
+    
+    return (
+      <Box sx={{ mt: 2, mb: 2, border: 1, borderColor: 'warning.light', p: 2, borderRadius: 1 }}>
+        <Typography variant="h6" color="warning.main" gutterBottom>
+          Debug Information
+        </Typography>
+        
+        <Typography variant="subtitle2" gutterBottom>Citation Fields</Typography>
+        <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Field Name</TableCell>
+                <TableCell>Present</TableCell>
+                <TableCell>Value</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {Object.entries(debugInfo.citationFields).map(([field, value]) => (
+                <TableRow key={field}>
+                  <TableCell>{field}</TableCell>
+                  <TableCell>
+                    {value !== undefined && value !== null ? (
+                      <Chip label="Yes" size="small" color="success" />
+                    ) : (
+                      <Chip label="No" size="small" color="error" />
+                    )}
+                  </TableCell>
+                  <TableCell>{value !== undefined && value !== null ? String(value) : 'N/A'}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        
+        <Typography variant="subtitle2" gutterBottom>Boost Fields</Typography>
+        <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Field Name</TableCell>
+                <TableCell>Present</TableCell>
+                <TableCell>Value</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {Object.entries(debugInfo.boostFields).map(([field, value]) => (
+                <TableRow key={field}>
+                  <TableCell>{field}</TableCell>
+                  <TableCell>
+                    {value !== undefined && value !== null ? (
+                      <Chip label="Yes" size="small" color="success" />
+                    ) : (
+                      <Chip label="No" size="small" color="error" />
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {field === 'boostFactors' && typeof value === 'object' ? (
+                      <Typography variant="caption" component="pre" sx={{ maxHeight: 100, overflow: 'auto' }}>
+                        {JSON.stringify(value, null, 2)}
+                      </Typography>
+                    ) : (
+                      value !== undefined && value !== null ? String(value) : 'N/A'
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        
+        <Typography variant="subtitle2" gutterBottom>First Result Raw Data</Typography>
+        <Box 
+          component="pre" 
+          sx={{ 
+            maxHeight: 200, 
+            overflow: 'auto', 
+            fontSize: '0.75rem', 
+            bgcolor: 'grey.100', 
+            p: 1, 
+            borderRadius: 1 
+          }}
+        >
+          {JSON.stringify(debugInfo.firstResult, null, 2)}
+        </Box>
+      </Box>
+    );
+  };
+  
   return (
     <Card>
       <CardHeader 
         title="Boost Factor Experiment" 
         subheader="Test how different boost factors affect search result ranking"
+        action={
+          <Button
+            startIcon={<BugReportIcon />}
+            variant="outlined"
+            size="small"
+            color="warning"
+            onClick={() => setDebugMode(!debugMode)}
+          >
+            {debugMode ? 'Hide Debug' : 'Debug Mode'}
+          </Button>
+        }
       />
       <CardContent>
         <Grid container spacing={3}>
@@ -256,8 +412,8 @@ const BoostExperiment = ({ originalResults, query }) => {
                       disabled={!boostConfig.enableRecencyBoost}
                       onChange={(e) => updateBoostConfig('recencyFunction', e.target.value)}
                     >
-                      <MenuItem value="inverse">Inverse (1/1+m*age)</MenuItem>
                       <MenuItem value="exponential">Exponential (e^-m*age)</MenuItem>
+                      <MenuItem value="inverse">Inverse (1/1+m*age)</MenuItem>
                       <MenuItem value="linear">Linear (1-m*age)</MenuItem>
                       <MenuItem value="sigmoid">Sigmoid (1/(1+e^(m*(age-α))))</MenuItem>
                     </Select>
@@ -359,7 +515,7 @@ const BoostExperiment = ({ originalResults, query }) => {
                     >
                       <MenuItem value="sum">Sum</MenuItem>
                       <MenuItem value="product">Product</MenuItem>
-                      <MenuItem value="weightedSum">Weighted Sum</MenuItem>
+                      <MenuItem value="max">Maximum</MenuItem>
                     </Select>
                   </FormControl>
                 </Box>
@@ -417,6 +573,11 @@ const BoostExperiment = ({ originalResults, query }) => {
                 Configure and apply boost factors to see how they affect the ranking.
               </Alert>
             )}
+            
+            {/* Debug Panel */}
+            <Collapse in={debugMode}>
+              {renderDebugPanel()}
+            </Collapse>
             
             {results && results.length > 0 && (
               <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
@@ -486,4 +647,4 @@ const BoostExperiment = ({ originalResults, query }) => {
   );
 };
 
-export default BoostExperiment; 
+export default BoostExperiment;
