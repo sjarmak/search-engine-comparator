@@ -1846,6 +1846,27 @@ async def boost_experiment(data: dict):
             # Store for boost processing
             processed_results.append(result_copy)
         
+        # Add this after extracting all metadata from ADS (around line 1880-1900)
+        # Inside the boost_experiment function, after processing the metadata but before calculating boosts
+
+        # Add a dedicated metadata section for frontend display
+        for result in processed_results:
+            # Create a metadata section that's easy for the frontend to access
+            result["metadata"] = {
+                "citations": result.get("citations", 0),
+                "doctype": result.get("doctype", "unknown"),
+                "year": result.get("year", 0),
+                "refereed": any(p == "REFEREED" for p in result.get("property", [])),
+                "openAccess": any(oa in result.get("property", []) for oa in 
+                                 ["OPENACCESS", "PUB_OPENACCESS", "EPRINT_OPENACCESS"])
+            }
+            
+            # Ensure citation count is also available at the top level for backward compatibility
+            if "citations" not in result or result["citations"] == 0:
+                result["citations"] = result["metadata"]["citations"]
+            
+            logger.info(f"Enhanced metadata for {result.get('identifier', 'unknown')}: {result['metadata']}")
+        
         # Step 4: Apply boosts based on metadata
         current_year = datetime.now().year
         current_month = datetime.now().month
