@@ -343,6 +343,43 @@ async def safe_api_request(client, method, url, **kwargs):
     
     return None
 
+async def get_bibcode_from_doi(doi):
+    """Convert a DOI to an ADS bibcode"""
+    if not doi:
+        return None
+        
+    try:
+        # Get API token
+        ads_token = os.environ.get("ADS_API_TOKEN")
+        if not ads_token:
+            logger.warning("ADS_API_TOKEN not found, cannot fetch bibcode")
+            return None
+            
+        # Query ADS API for the bibcode
+        url = "https://api.adsabs.harvard.edu/v1/search/query"
+        params = {
+            "q": f"doi:{doi}",
+            "fl": "bibcode",
+            "rows": 1
+        }
+        headers = {
+            "Authorization": f"Bearer {ads_token}"
+        }
+        
+        response = requests.get(url, params=params, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            docs = data.get("response", {}).get("docs", [])
+            
+            if docs and "bibcode" in docs[0]:
+                return docs[0]["bibcode"]
+                
+    except Exception as e:
+        logger.exception(f"Error fetching bibcode for DOI {doi}: {str(e)}")
+        
+    return None
+
 # Helper functions for text normalization and cleaning
 def normalize_text(text: str) -> str:
     """Normalize text for better comparison."""
@@ -1696,14 +1733,14 @@ async def boost_experiment(data: dict):
             
             # Get identifier
             bibcode = result.get("bibcode", "")
-            if bibcode:
-                bibcodes.append(bibcode)
-                original_info[bibcode] = {
-                    "result": result,
-                    "rank": original_rank,
-                    "score": original_score
-                }
-                logger.info(f"Found bibcode: {bibcode} (rank: {original_rank})")
+            if not bibcode or bibcode.startswith("10."):  # Looks like a DOI
+                doi = result.get("doi", "") or bibcode
+                if doi:
+                    # Try to get bibcode from DOI
+                    real_bibcode = await get_bibcode_from_doi(doi)
+                    if real_bibcode:
+                        bibcode = real_bibcode
+                        logger.info(f"Converted DOI to bibcode: {doi} -> {bibcode}")
             else:
                 # For results without bibcodes, create placeholder
                 identifier = result.get("doi", "") or result.get("id", "") or f"result-{i}"
@@ -1758,6 +1795,15 @@ async def boost_experiment(data: dict):
                                     ads_metadata[doc["bibcode"]] = doc
                                     # Log citation data for debugging
                                     citation_count = doc.get("citation_count", 0)
+                                    # In your boost_experiment function, add this fallback
+                                    # After trying to extract citation_count from metadata
+
+                                    # Fallback: Check if we have citation info in the original result
+                                    if citation_count == 0:
+                                        original_citations = original_result.get("citations", 0)
+                                        if original_citations and original_citations > 0:
+                                            citation_count = original_citations
+                                            logger.info(f"Using original citation count for {bibcode}: {citation_count}")
                                     logger.info(f"Retrieved metadata for {doc['bibcode']} with citation_count: {citation_count}")
                         else:
                             logger.error(f"ADS API error: {response.status_code} - {response.text}")
@@ -2077,6 +2123,52 @@ async def boost_experiment(data: dict):
             "message": f"Error processing boost experiment: {str(e)}"
         }
 
+@app.get("/api/debug/paper/{doi}")
+async def debug_paper(doi: str):
+    """Debug endpoint to get raw paper data from ADS by DOI"""
+    try:
+        # First convert DOI to bibcode
+        bibcode = await get_bibcode_from_doi(doi)
+        
+        if not bibcode:
+            return {"status": "error", "message": f"Could not find bibcode for DOI: {doi}"}
+            
+        # Now fetch all metadata for this bibcode
+        ads_token = os.environ.get("ADS_API_TOKEN")
+        if not ads_token:
+            return {"status": "error", "message": "ADS_API_TOKEN not configured"}
+            
+        url = "https://api.adsabs.harvard.edu/v1/search/query"
+        params = {
+            "q": f"bibcode:{bibcode}",
+            "fl": "*",  # Get all fields
+            "rows": 1
+        }
+        headers = {
+            "Authorization": f"Bearer {ads_token}"
+        }
+        
+        response = requests.get(url, params=params, headers=headers, timeout=30)
+        
+        if response.status_code != 200:
+            return {
+                "status": "error", 
+                "message": f"ADS API error: {response.status_code}",
+                "details": response.text
+            }
+            
+        data = response.json()
+        
+        return {
+            "status": "success",
+            "bibcode": bibcode,
+            "doi": doi,
+            "raw_data": data.get("response", {}).get("docs", [{}])[0]
+        }
+        
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    
 @app.get("/api/debug/citation/{bibcode}")
 async def debug_citation(bibcode: str):
     """
