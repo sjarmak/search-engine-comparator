@@ -38,9 +38,46 @@ import traceback
 from utils.ads_utils import get_citation_count
 import requests
 
-# Initialize logging
-logging.basicConfig(level=logging.INFO)
+# Initialize logging with more detail
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# Load environment variables with explicit path handling
+try:
+    # Try multiple possible locations for .env file
+    env_locations = [
+        Path(__file__).resolve().parent / '.env',  # backend/.env
+        Path(__file__).resolve().parent.parent / '.env',  # project_root/.env
+        Path.cwd() / 'backend' / '.env',  # ./backend/.env from current directory
+    ]
+    
+    env_file_found = False
+    for env_path in env_locations:
+        if env_path.exists():
+            logger.info(f"Found .env file at: {env_path}")
+            load_dotenv(env_path)
+            env_file_found = True
+            break
+    
+    if not env_file_found:
+        logger.error("No .env file found in any of these locations:")
+        for loc in env_locations:
+            logger.error(f"  - {loc}")
+    
+    # Verify API key loading
+    ads_key = os.getenv("ADS_API_KEY")
+    if ads_key:
+        logger.info("Successfully loaded ADS API key")
+    else:
+        logger.error("ADS API key not found in environment variables")
+        
+except Exception as e:
+    logger.error(f"Error loading environment variables: {str(e)}")
+    logger.error(f"Current working directory: {Path.cwd()}")
+    logger.error(f"Script location: {Path(__file__).resolve()}")
 
 def apply_platform_specific_fixes():
     """Apply fixes specific to the operating system platform."""
@@ -64,15 +101,6 @@ def apply_platform_specific_fixes():
 
 # Apply platform-specific fixes BEFORE any other operations
 apply_platform_specific_fixes()
-
-# Load environment variables
-load_dotenv()
-
-# Download NLTK data (run once)
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
 
 # Initialize stemmer
 stemmer = PorterStemmer()
@@ -112,12 +140,15 @@ app = FastAPI(
     version="0.1.0"
 )
 
-# Add CORS middleware
+# Add CORS middleware with updated configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://search-engine-comparator.onrender.com", 
         "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173", 
+        "http://127.0.0.1:5173",
+        "https://search-engine-comparator.onrender.com", 
         "https://search-engine-comparator-1.onrender.com",
         "https://search-engine-comparator-web.onrender.com",
         "https://search-engine-comparator-api.onrender.com",
@@ -252,6 +283,9 @@ class SearchResult(BaseModel):
     url: Optional[str] = None
     source: str
     rank: int
+    citation_count: Optional[int] = None
+    doctype: Optional[str] = None
+    property: Optional[List[str]] = None
 
 # Create a timeout context manager
 class timeout:
