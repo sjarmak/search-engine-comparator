@@ -1801,10 +1801,11 @@ async def boost_experiment(data: dict):
 
                                     # Fallback: Check if we have citation info in the original result
                                     if citation_count == 0:
-                                        original_citations = original_result.get("citations", 0)
-                                        if original_citations and original_citations > 0:
-                                            citation_count = original_citations
-                                            logger.info(f"Using original citation count for {bibcode}: {citation_count}")
+                                        for original_result in original_results:
+                                            original_citations = original_result.get("citations", 0)
+                                            if original_citations and original_citations > 0:
+                                                citation_count = original_citations
+                                                logger.info(f"Using original citation count for {bibcode}: {citation_count}")
                                     logger.info(f"Retrieved metadata for {doc['bibcode']} with citation_count: {citation_count}")
                         else:
                             logger.error(f"ADS API error: {response.status_code} - {response.text}")
