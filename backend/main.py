@@ -45,6 +45,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Download necessary NLTK resources at startup
+try:
+    logger.info("Attempting to download NLTK punkt resource...")
+    # Create a directory for NLTK data that's writable in containerized environments
+    nltk_data_dir = Path("./nltk_data")
+    nltk_data_dir.mkdir(exist_ok=True)
+    
+    # Download to the specified directory
+    nltk.download('punkt', download_dir=str(nltk_data_dir))
+    
+    # Add the download directory to NLTK's search path
+    nltk.data.path.append(str(nltk_data_dir))
+    
+    logger.info(f"Successfully downloaded NLTK punkt resource to {nltk_data_dir}")
+except Exception as e:
+    logger.error(f"Failed to download NLTK punkt resource: {str(e)}")
+    logger.error(f"NLTK search paths: {nltk.data.path}")
+
 # Load environment variables with explicit path handling
 try:
     # Try multiple possible locations for .env file
@@ -104,6 +122,15 @@ apply_platform_specific_fixes()
 
 # Initialize stemmer
 stemmer = PorterStemmer()
+
+# Preload and test NLTK tokenizer
+try:
+    # Test tokenization to make sure punkt is working
+    test_text = "Test sentence for NLTK tokenizer. This should work."
+    test_tokens = word_tokenize(test_text)
+    logger.info(f"NLTK tokenizer test successful: {len(test_tokens)} tokens found")
+except Exception as e:
+    logger.warning(f"NLTK tokenizer test failed: {str(e)}. Will use fallback tokenizer.")
 
 # Service configuration with fallback settings
 SERVICE_CONFIG = {
@@ -443,11 +470,38 @@ def stem_text(text: str) -> str:
     stemmed_words = [stemmer.stem(word) for word in words]
     return ' '.join(stemmed_words)
 
+def simple_tokenize(text: str) -> List[str]:
+    """A simple tokenizer that doesn't depend on NLTK."""
+    # Replace punctuation with spaces
+    text = re.sub(r'[^\w\s]', ' ', text)
+    # Split on whitespace
+    return text.split()
+
+def simple_preprocess_text(text: str) -> str:
+    """A simplified version of preprocess_text that doesn't use NLTK."""
+    if not text:
+        return ""
+    
+    # Normalize
+    text = text.lower()
+    text = re.sub(r'<[^>]+>', '', text)  # Remove HTML tags
+    text = re.sub(r'[^\w\s]', ' ', text)  # Remove special chars
+    text = ' '.join(text.split())  # Remove extra whitespace
+    
+    # No stemming, just return normalized text
+    return text
+
 def preprocess_text(text: str, apply_stemming: bool = True) -> str:
     """Preprocess text by normalizing and optionally stemming."""
     text = normalize_text(text)
+    
     if apply_stemming:
-        text = stem_text(text)
+        try:
+            text = stem_text(text)
+        except Exception as e:
+            logger.warning(f"Stemming failed, falling back to simple preprocessing: {str(e)}")
+            text = simple_preprocess_text(text)
+    
     return text
 
 # Functions for similarity metrics
