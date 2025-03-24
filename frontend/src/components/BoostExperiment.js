@@ -4,7 +4,7 @@ import {
   Slider, FormControlLabel, Switch, Typography, FormControl,
   InputLabel, Select, MenuItem, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Paper, Chip, Divider,
-  CircularProgress, Alert, Tooltip, IconButton, Collapse
+  CircularProgress, Alert, Tooltip, IconButton, Collapse, List, ListItem, ListItemText
 } from '@mui/material';
 import InfoIcon from '@mui/icons-material/Info';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
@@ -26,7 +26,7 @@ const API_URL = process.env.REACT_APP_API_URL || 'https://search-engine-comparat
 const BoostExperiment = ({ originalResults, query }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [results, setResults] = useState(null);
+  const [boostedResults, setBoostedResults] = useState(null);
   const [debugMode, setDebugMode] = useState(false);
   const [debugInfo, setDebugInfo] = useState(null);
   
@@ -55,13 +55,23 @@ const BoostExperiment = ({ originalResults, query }) => {
     combinationMethod: "sum"
   });
   
-  // Update a single boost config parameter
-  const updateBoostConfig = (key, value) => {
-    setBoostConfig({
-      ...boostConfig,
-      [key]: value
+  // Debug logging
+  useEffect(() => {
+    console.log('BoostExperiment mounted with:', {
+      originalResultsLength: originalResults?.length,
+      query,
+      boostConfig
     });
-  };
+    
+    if (originalResults?.length > 0) {
+      console.log("Sample result metadata:", {
+        citation: originalResults[0].citation_count,
+        year: originalResults[0].year,
+        doctype: originalResults[0].doctype,
+        properties: originalResults[0].property
+      });
+    }
+  }, [originalResults, query, boostConfig]);
   
   // Apply the boost experiment
   const applyBoosts = async () => {
@@ -75,13 +85,16 @@ const BoostExperiment = ({ originalResults, query }) => {
     setDebugInfo(null);
     
     try {
-      console.log("Sending request to boost-experiment endpoint with config:", boostConfig);
+      console.log('Sending boost experiment request with:', {
+        query,
+        results: originalResults,
+        boostConfig
+      });
       
-      // Use the full API URL here instead of relative path
       const response = await fetch(`${API_URL}/api/boost-experiment`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           query,
@@ -90,52 +103,21 @@ const BoostExperiment = ({ originalResults, query }) => {
         })
       });
       
+      console.log('Boost experiment response status:', response.status);
+      
       if (!response.ok) {
-        throw new Error(`Error: ${response.status} ${response.statusText}`);
+        const errorText = await response.text();
+        console.error('Boost experiment error:', errorText);
+        throw new Error(`Failed to apply boosts: ${errorText}`);
       }
       
-      // Process and parse the response carefully
-      let data;
-      try {
-        const text = await response.text();
-        console.log("Raw response text:", text);
-        data = JSON.parse(text);
-      } catch (jsonError) {
-        throw new Error(`JSON parsing error: ${jsonError.message}`);
-      }
-      
-      if (data.status === "error") {
-        throw new Error(data.message);
-      }
-      
-      // Process and normalize the results
-      const processedResults = (data.results || []).map(result => {
-        // Ensure all required fields exist with fallbacks
-        return {
-          ...result,
-          newRank: result.rank,
-          rankChange: result.rankChange || 0,
-          citations: result.citations || result.citation_count || 0,
-          year: result.year || '',
-          // Ensure boost factors exist
-          finalBoost: result.totalBoost || 0,
-          // Add direct access to boost factors for tooltip display
-          boostFactors: {
-            ...result.boostFactors,
-            citeBoost: result.citeBoost || result.boostFactors?.citeBoost || 0,
-            recencyBoost: result.recencyBoost || result.boostFactors?.recencyBoost || 0,
-            doctypeBoost: result.doctypeBoost || result.boostFactors?.doctypeBoost || 0,
-            refereedBoost: result.refereedBoost || result.boostFactors?.refereedBoost || 0,
-          }
-        };
-      });
-      
-      console.log("Processed results:", processedResults);
-      setResults(processedResults);
+      const data = await response.json();
+      console.log('Received boosted results:', data);
+      setBoostedResults(data);
       
       // Store debug info about the first result for debugging panel
-      if (processedResults.length > 0) {
-        const firstResult = processedResults[0];
+      if (data.results && data.results.length > 0) {
+        const firstResult = data.results[0];
         setDebugInfo({
           firstResult,
           citationFields: {
@@ -145,10 +127,10 @@ const BoostExperiment = ({ originalResults, query }) => {
           },
           boostFields: {
             boostFactors: firstResult.boostFactors,
-            citeBoost: firstResult.citeBoost,
-            recencyBoost: firstResult.recencyBoost,
-            doctypeBoost: firstResult.doctypeBoost,
-            refereedBoost: firstResult.refereedBoost,
+            citeBoost: firstResult.citeBoost || firstResult.boostFactors?.citeBoost || 0,
+            recencyBoost: firstResult.recencyBoost || firstResult.boostFactors?.recencyBoost || 0,
+            doctypeBoost: firstResult.doctypeBoost || firstResult.boostFactors?.doctypeBoost || 0,
+            refereedBoost: firstResult.refereedBoost || firstResult.boostFactors?.refereedBoost || 0,
             totalBoost: firstResult.totalBoost,
             finalBoost: firstResult.finalBoost,
           }
@@ -156,8 +138,8 @@ const BoostExperiment = ({ originalResults, query }) => {
       }
       
     } catch (err) {
-      console.error("Error in boost experiment:", err);
-      setError(`Failed to process boost experiment: ${err.message}`);
+      console.error('Error in boost experiment:', err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -208,12 +190,14 @@ const BoostExperiment = ({ originalResults, query }) => {
     });
   };
   
-  // Run experiment initially and on config changes
+  // Apply boosts whenever configuration changes
   useEffect(() => {
     if (originalResults && originalResults.length > 0) {
       applyBoosts();
+    } else {
+      console.log('No original results to boost');
     }
-  }, []);
+  }, [boostConfig, originalResults]);
   
   // Debug component to inspect fields and values
   const renderDebugPanel = () => {
@@ -307,343 +291,338 @@ const BoostExperiment = ({ originalResults, query }) => {
     );
   };
   
-  return (
-    <Card>
-      <CardHeader 
-        title="Boost Factor Experiment" 
-        subheader="Test how different boost factors affect search result ranking"
-        action={
-          <Button
-            startIcon={<BugReportIcon />}
-            variant="outlined"
-            size="small"
-            color="warning"
-            onClick={() => setDebugMode(!debugMode)}
-          >
-            {debugMode ? 'Hide Debug' : 'Debug Mode'}
-          </Button>
-        }
-      />
-      <CardContent>
-        <Grid container spacing={3}>
-          {/* Configuration Panel */}
-          <Grid item xs={12} md={4}>
-            <Card variant="outlined">
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Boost Configuration
-                  <Tooltip title="Configure boost factors to see how they affect result ranking">
-                    <IconButton size="small" sx={{ ml: 1 }}>
+  if (!originalResults || originalResults.length === 0) {
+    return (
+      <Alert severity="warning">
+        No results available for boost experiment. Please perform a search first.
+      </Alert>
+    );
+  }
+  
+  const handleConfigChange = (field, value) => {
+    setBoostConfig(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+  
+  const renderBoostControls = () => (
+    <Paper sx={{ p: 2, mb: 2 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+        <Typography variant="h6">Boost Configuration</Typography>
+        <Button
+          startIcon={<ReplayIcon />}
+          variant="outlined"
+          size="small"
+          onClick={resetDefaults}
+        >
+          Reset Defaults
+        </Button>
+      </Box>
+      <Grid container spacing={2}>
+        {/* Citation Boost */}
+        <Grid item xs={12}>
+          <Box sx={{ mb: 2 }}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={boostConfig.enableCiteBoost}
+                  onChange={(e) => handleConfigChange('enableCiteBoost', e.target.checked)}
+                />
+              }
+              label={
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  <Typography>Citation Boost</Typography>
+                  <Tooltip title="Boost based on number of citations">
+                    <IconButton size="small">
                       <HelpOutlineIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
-                </Typography>
-                
-                {/* Citation Boost */}
-                <Box sx={{ mb: 3 }}>
-                  <Typography variant="subtitle2" gutterBottom>
-                    Citation Boost
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          checked={boostConfig.enableCiteBoost}
-                          onChange={(e) => updateBoostConfig('enableCiteBoost', e.target.checked)}
-                          size="small"
-                        />
-                      }
-                      label="Enable"
-                      labelPlacement="start"
-                      sx={{ ml: 1 }}
-                    />
-                  </Typography>
-                  
-                  <Typography variant="body2" color="text.secondary" gutterBottom>
-                    Weight factor for citation counts
-                  </Typography>
-                  
-                  <Slider
-                    disabled={!boostConfig.enableCiteBoost}
-                    value={boostConfig.citeBoostWeight}
-                    min={0}
-                    max={2}
-                    step={0.1}
-                    valueLabelDisplay="auto"
-                    onChange={(_, value) => updateBoostConfig('citeBoostWeight', value)}
-                  />
                 </Box>
-                
-                {/* Recency Boost */}
-                <Box sx={{ mb: 3 }}>
-                  <Typography variant="subtitle2" gutterBottom>
-                    Recency Boost
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          checked={boostConfig.enableRecencyBoost}
-                          onChange={(e) => updateBoostConfig('enableRecencyBoost', e.target.checked)}
-                          size="small"
-                        />
-                      }
-                      label="Enable"
-                      labelPlacement="start"
-                      sx={{ ml: 1 }}
-                    />
-                  </Typography>
-                  
-                  <Typography variant="body2" color="text.secondary" gutterBottom>
-                    Weight factor for paper recency
-                  </Typography>
-                  
-                  <Slider
-                    disabled={!boostConfig.enableRecencyBoost}
-                    value={boostConfig.recencyBoostWeight}
-                    min={0}
-                    max={2}
-                    step={0.1}
-                    valueLabelDisplay="auto"
-                    onChange={(_, value) => updateBoostConfig('recencyBoostWeight', value)}
-                  />
-                  
-                  <FormControl fullWidth sx={{ mt: 2 }} size="small">
-                    <InputLabel>Recency Function</InputLabel>
-                    <Select
-                      value={boostConfig.recencyFunction}
-                      label="Recency Function"
-                      disabled={!boostConfig.enableRecencyBoost}
-                      onChange={(e) => updateBoostConfig('recencyFunction', e.target.value)}
-                    >
-                      <MenuItem value="exponential">Exponential (e^-m*age)</MenuItem>
-                      <MenuItem value="inverse">Inverse (1/1+m*age)</MenuItem>
-                      <MenuItem value="linear">Linear (1-m*age)</MenuItem>
-                      <MenuItem value="sigmoid">Sigmoid (1/(1+e^(m*(age-α))))</MenuItem>
-                    </Select>
-                  </FormControl>
-                  
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }} gutterBottom>
-                    Decay multiplier
-                  </Typography>
-                  
-                  <Slider
-                    disabled={!boostConfig.enableRecencyBoost}
-                    value={boostConfig.recencyMultiplier}
-                    min={0.01}
-                    max={0.2}
-                    step={0.01}
-                    valueLabelDisplay="auto"
-                    onChange={(_, value) => updateBoostConfig('recencyMultiplier', value)}
-                  />
+              }
+            />
+            {boostConfig.enableCiteBoost && (
+              <Box sx={{ px: 2, mt: 1 }}>
+                <Typography variant="caption" gutterBottom>Weight</Typography>
+                <Slider
+                  value={boostConfig.citeBoostWeight}
+                  onChange={(_, value) => handleConfigChange('citeBoostWeight', value)}
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  valueLabelDisplay="auto"
+                  aria-label="Citation Boost Weight"
+                />
+              </Box>
+            )}
+          </Box>
+        </Grid>
+
+        {/* Recency Boost */}
+        <Grid item xs={12}>
+          <Box sx={{ mb: 2 }}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={boostConfig.enableRecencyBoost}
+                  onChange={(e) => handleConfigChange('enableRecencyBoost', e.target.checked)}
+                />
+              }
+              label={
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  <Typography>Recency Boost</Typography>
+                  <Tooltip title="Boost based on publication year">
+                    <IconButton size="small">
+                      <HelpOutlineIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
                 </Box>
-                
-                {/* Document Type Boost */}
-                <Box sx={{ mb: 3 }}>
-                  <Typography variant="subtitle2" gutterBottom>
-                    Document Type Boost
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          checked={boostConfig.enableDoctypeBoost}
-                          onChange={(e) => updateBoostConfig('enableDoctypeBoost', e.target.checked)}
-                          size="small"
-                        />
-                      }
-                      label="Enable"
-                      labelPlacement="start"
-                      sx={{ ml: 1 }}
-                    />
-                  </Typography>
-                  
-                  <Typography variant="body2" color="text.secondary" gutterBottom>
-                    Weight factor for document type
-                  </Typography>
-                  
-                  <Slider
-                    disabled={!boostConfig.enableDoctypeBoost}
-                    value={boostConfig.doctypeBoostWeight}
-                    min={0}
-                    max={2}
-                    step={0.1}
-                    valueLabelDisplay="auto"
-                    onChange={(_, value) => updateBoostConfig('doctypeBoostWeight', value)}
-                  />
-                </Box>
-                
-                {/* Refereed Boost */}
-                <Box sx={{ mb: 3 }}>
-                  <Typography variant="subtitle2" gutterBottom>
-                    Refereed Boost
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          checked={boostConfig.enableRefereedBoost}
-                          onChange={(e) => updateBoostConfig('enableRefereedBoost', e.target.checked)}
-                          size="small"
-                        />
-                      }
-                      label="Enable"
-                      labelPlacement="start"
-                      sx={{ ml: 1 }}
-                    />
-                  </Typography>
-                  
-                  <Typography variant="body2" color="text.secondary" gutterBottom>
-                    Weight factor for refereed papers
-                  </Typography>
-                  
-                  <Slider
-                    disabled={!boostConfig.enableRefereedBoost}
-                    value={boostConfig.refereedBoostWeight}
-                    min={0}
-                    max={2}
-                    step={0.1}
-                    valueLabelDisplay="auto"
-                    onChange={(_, value) => updateBoostConfig('refereedBoostWeight', value)}
-                  />
-                </Box>
-                
-                {/* Combination Method */}
-                <Box sx={{ mb: 3 }}>
-                  <Typography variant="subtitle2" gutterBottom>
-                    Combination Method
-                  </Typography>
-                  
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Combination Method</InputLabel>
-                    <Select
-                      value={boostConfig.combinationMethod}
-                      label="Combination Method"
-                      onChange={(e) => updateBoostConfig('combinationMethod', e.target.value)}
-                    >
-                      <MenuItem value="sum">Sum</MenuItem>
-                      <MenuItem value="product">Product</MenuItem>
-                      <MenuItem value="max">Maximum</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Box>
-                
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 3 }}>
-                  <Button 
-                    variant="outlined" 
-                    startIcon={<ReplayIcon />} 
-                    onClick={resetDefaults}
+              }
+            />
+            {boostConfig.enableRecencyBoost && (
+              <Box sx={{ px: 2, mt: 1 }}>
+                <FormControl fullWidth size="small" sx={{ mb: 1 }}>
+                  <InputLabel>Decay Function</InputLabel>
+                  <Select
+                    value={boostConfig.recencyFunction}
+                    onChange={(e) => handleConfigChange('recencyFunction', e.target.value)}
+                    label="Decay Function"
                   >
-                    Reset Defaults
-                  </Button>
-                  
-                  <Button 
-                    variant="contained" 
-                    color="primary" 
-                    onClick={applyBoosts}
-                    disabled={loading}
-                  >
-                    Apply Boosts
-                    {loading && (
-                      <CircularProgress 
-                        size={24} 
-                        color="inherit" 
-                        sx={{ ml: 1 }} 
-                      />
-                    )}
-                  </Button>
+                    <MenuItem value="exponential">Exponential</MenuItem>
+                    <MenuItem value="inverse">Inverse</MenuItem>
+                    <MenuItem value="linear">Linear</MenuItem>
+                    <MenuItem value="sigmoid">Sigmoid</MenuItem>
+                  </Select>
+                </FormControl>
+                <Typography variant="caption" gutterBottom>Weight</Typography>
+                <Slider
+                  value={boostConfig.recencyBoostWeight}
+                  onChange={(_, value) => handleConfigChange('recencyBoostWeight', value)}
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  valueLabelDisplay="auto"
+                  aria-label="Recency Boost Weight"
+                />
+              </Box>
+            )}
+          </Box>
+        </Grid>
+
+        {/* Document Type Boost */}
+        <Grid item xs={12}>
+          <Box sx={{ mb: 2 }}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={boostConfig.enableDoctypeBoost}
+                  onChange={(e) => handleConfigChange('enableDoctypeBoost', e.target.checked)}
+                />
+              }
+              label={
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  <Typography>Document Type Boost</Typography>
+                  <Tooltip title="Boost based on document type (article, review, etc.)">
+                    <IconButton size="small">
+                      <HelpOutlineIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
                 </Box>
-              </CardContent>
-            </Card>
+              }
+            />
+            {boostConfig.enableDoctypeBoost && (
+              <Box sx={{ px: 2, mt: 1 }}>
+                <Typography variant="caption" gutterBottom>Weight</Typography>
+                <Slider
+                  value={boostConfig.doctypeBoostWeight}
+                  onChange={(_, value) => handleConfigChange('doctypeBoostWeight', value)}
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  valueLabelDisplay="auto"
+                  aria-label="Document Type Boost Weight"
+                />
+              </Box>
+            )}
+          </Box>
+        </Grid>
+
+        {/* Refereed Boost */}
+        <Grid item xs={12}>
+          <Box sx={{ mb: 2 }}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={boostConfig.enableRefereedBoost}
+                  onChange={(e) => handleConfigChange('enableRefereedBoost', e.target.checked)}
+                />
+              }
+              label={
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  <Typography>Refereed Boost</Typography>
+                  <Tooltip title="Boost for peer-reviewed papers">
+                    <IconButton size="small">
+                      <HelpOutlineIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+              }
+            />
+            {boostConfig.enableRefereedBoost && (
+              <Box sx={{ px: 2, mt: 1 }}>
+                <Typography variant="caption" gutterBottom>Weight</Typography>
+                <Slider
+                  value={boostConfig.refereedBoostWeight}
+                  onChange={(_, value) => handleConfigChange('refereedBoostWeight', value)}
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  valueLabelDisplay="auto"
+                  aria-label="Refereed Boost Weight"
+                />
+              </Box>
+            )}
+          </Box>
+        </Grid>
+
+        {/* Combination Method */}
+        <Grid item xs={12}>
+          <FormControl fullWidth size="small">
+            <InputLabel>Combination Method</InputLabel>
+            <Select
+              value={boostConfig.combinationMethod}
+              onChange={(e) => handleConfigChange('combinationMethod', e.target.value)}
+              label="Combination Method"
+            >
+              <MenuItem value="sum">Sum</MenuItem>
+              <MenuItem value="product">Product</MenuItem>
+              <MenuItem value="max">Maximum</MenuItem>
+            </Select>
+          </FormControl>
+        </Grid>
+      </Grid>
+    </Paper>
+  );
+  
+  return (
+    <Box sx={{ width: '100%', p: 2 }}>
+      {!originalResults || originalResults.length === 0 ? (
+        <Alert severity="warning">
+          No results available for boost experiment. Please perform a search first.
+        </Alert>
+      ) : (
+        <Grid container spacing={2}>
+          {/* Boost Controls */}
+          <Grid item xs={12} md={4}>
+            {renderBoostControls()}
           </Grid>
-          
+
           {/* Results Panel */}
           <Grid item xs={12} md={8}>
-            <Typography variant="h6" gutterBottom>
-              Ranking Results
-              {loading && (
-                <CircularProgress 
-                  size={20} 
-                  color="primary" 
-                  sx={{ ml: 1 }} 
-                />
+            <Paper sx={{ p: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h6" sx={{ flexGrow: 1 }}>
+                  Ranking Results
+                </Typography>
+                {loading && <CircularProgress size={24} sx={{ ml: 2 }} />}
+                <Button
+                  startIcon={<BugReportIcon />}
+                  variant="outlined"
+                  size="small"
+                  color="warning"
+                  onClick={() => setDebugMode(!debugMode)}
+                  sx={{ ml: 2 }}
+                >
+                  {debugMode ? 'Hide Debug' : 'Debug Mode'}
+                </Button>
+              </Box>
+
+              {error && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {error}
+                </Alert>
               )}
-            </Typography>
-            
-            {error && (
-              <Alert severity="error" sx={{ mb: 2 }}>
-                {error}
-              </Alert>
-            )}
-            
-            {!results && !loading && !error && (
-              <Alert severity="info">
-                Configure and apply boost factors to see how they affect the ranking.
-              </Alert>
-            )}
-            
-            {/* Debug Panel */}
-            <Collapse in={debugMode}>
-              {renderDebugPanel()}
-            </Collapse>
-            
-            {results && results.length > 0 && (
-              <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
-                <Table stickyHeader size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Original Rank</TableCell>
-                      <TableCell>New Rank</TableCell>
-                      <TableCell>Change</TableCell>
-                      <TableCell>Title</TableCell>
-                      <TableCell>Year</TableCell>
-                      <TableCell>Citations</TableCell>
-                      <TableCell>Boost Score</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {results.map((result, index) => (
-                      <TableRow 
-                        key={result.identifier || index}
-                        sx={{
-                          backgroundColor: result.rankChange > 5 ? 'rgba(76, 175, 80, 0.1)' : 
-                                           result.rankChange < -5 ? 'rgba(244, 67, 54, 0.1)' : 
-                                           'inherit'
-                        }}
-                      >
-                        <TableCell>{result.originalRank}</TableCell>
-                        <TableCell>{result.newRank}</TableCell>
-                        <TableCell>
-                          {formatRankChange(result.rankChange)}
-                        </TableCell>
-                        <TableCell>
-                          <Tooltip title={
-                            <Box>
-                              <Typography variant="caption" display="block">
-                                <strong>Cite Boost:</strong> {formatBoostFactor(result.boostFactors?.citeBoost)}
-                              </Typography>
-                              <Typography variant="caption" display="block">
-                                <strong>Recency Boost:</strong> {formatBoostFactor(result.boostFactors?.recencyBoost)}
-                              </Typography>
-                              <Typography variant="caption" display="block">
-                                <strong>Doctype Boost:</strong> {formatBoostFactor(result.boostFactors?.doctypeBoost)}
-                              </Typography>
-                              <Typography variant="caption" display="block">
-                                <strong>Refereed Boost:</strong> {formatBoostFactor(result.boostFactors?.refereedBoost)}
-                              </Typography>
-                              <Typography variant="caption" display="block">
-                                <strong>Final Boost:</strong> {formatBoostFactor(result.finalBoost)}
-                              </Typography>
-                            </Box>
-                          }>
-                            <Typography variant="body2">{result.title}</Typography>
-                          </Tooltip>
-                        </TableCell>
-                        <TableCell>{result.year || '—'}</TableCell>
-                        <TableCell>{result.citations || '0'}</TableCell>
-                        <TableCell>{formatBoostFactor(result.finalBoost)}</TableCell>
+
+              <Collapse in={debugMode}>
+                {renderDebugPanel()}
+              </Collapse>
+
+              {boostedResults?.results ? (
+                <TableContainer sx={{ maxHeight: 'calc(100vh - 300px)' }}>
+                  <Table stickyHeader size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Rank</TableCell>
+                        <TableCell>Change</TableCell>
+                        <TableCell>Title</TableCell>
+                        <TableCell align="right">Year</TableCell>
+                        <TableCell align="right">Citations</TableCell>
+                        <TableCell align="right">Boost</TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
+                    </TableHead>
+                    <TableBody>
+                      {boostedResults.results.map((result) => (
+                        <TableRow
+                          key={result.bibcode || result.title}
+                          sx={{
+                            backgroundColor: result.rankChange > 5 ? 'success.light' :
+                                           result.rankChange < -5 ? 'error.light' :
+                                           'inherit'
+                          }}
+                        >
+                          <TableCell>{result.rank}</TableCell>
+                          <TableCell>{formatRankChange(result.rankChange)}</TableCell>
+                          <TableCell>
+                            <Tooltip title={
+                              <Box>
+                                <Typography variant="caption" display="block">
+                                  Citations: {result.citation_count || 0}
+                                </Typography>
+                                <Typography variant="caption" display="block">
+                                  Type: {result.doctype || 'Unknown'}
+                                </Typography>
+                                <Typography variant="caption" display="block">
+                                  {result.property?.includes('REFEREED') ? 'Refereed' : 'Not Refereed'}
+                                </Typography>
+                                <Divider sx={{ my: 0.5 }} />
+                                <Typography variant="caption" display="block">
+                                  <strong>Boost Factors:</strong>
+                                </Typography>
+                                <Typography variant="caption" display="block">
+                                  Citation: {formatBoostFactor(result.boostFactors?.citeBoost)}
+                                </Typography>
+                                <Typography variant="caption" display="block">
+                                  Recency: {formatBoostFactor(result.boostFactors?.recencyBoost)}
+                                </Typography>
+                                <Typography variant="caption" display="block">
+                                  Document Type: {formatBoostFactor(result.boostFactors?.doctypeBoost)}
+                                </Typography>
+                                <Typography variant="caption" display="block">
+                                  Refereed: {formatBoostFactor(result.boostFactors?.refereedBoost)}
+                                </Typography>
+                              </Box>
+                            }>
+                              <Typography variant="body2">{result.title}</Typography>
+                            </Tooltip>
+                          </TableCell>
+                          <TableCell align="right">{result.year || '—'}</TableCell>
+                          <TableCell align="right">{result.citation_count || 0}</TableCell>
+                          <TableCell align="right">{formatBoostFactor(result.finalBoost)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              ) : (
+                <Alert severity="info">
+                  Configure and apply boost factors to see how they affect the ranking.
+                </Alert>
+              )}
+            </Paper>
           </Grid>
         </Grid>
-      </CardContent>
-    </Card>
+      )}
+    </Box>
   );
 };
 

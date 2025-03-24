@@ -533,8 +533,8 @@ async def get_ads_results(query: str, fields: List[str], num_results: int = NUM_
     params = {
         "q": query,
         "rows": num_results,
-        "fl": "title,author,abstract,doi,year,bibcode",
-        "sort": "score desc",  # Changed from "date desc" to "score desc"
+        "fl": "title,author,abstract,doi,year,bibcode,citation_count,doctype,property",
+        "sort": "score desc",
     }
     
     logger.info(f"Making ADS API request with params: {params}")
@@ -551,7 +551,7 @@ async def get_ads_results(query: str, fields: List[str], num_results: int = NUM_
             
         if response.status_code != 200:
             logger.error(f"ADS API error: Status {response.status_code}")
-            logger.error(f"ADS API response: {response.text[:500]}")  # Log first 500 chars of error
+            logger.error(f"ADS API response: {response.text[:500]}")
             return []
             
         if not response:
@@ -565,17 +565,33 @@ async def get_ads_results(query: str, fields: List[str], num_results: int = NUM_
         results = []
         for i, doc in enumerate(docs, 1):
             try:
+                # Extract doctype and property fields
+                doctype = doc.get('doctype', None)
+                if isinstance(doctype, list) and len(doctype) > 0:
+                    doctype = doctype[0]
+                elif doctype is None:
+                    doctype = ""
+                
+                property_list = doc.get('property', [])
+                if not isinstance(property_list, list):
+                    property_list = [property_list] if property_list else []
+                
+                # Create result with additional metadata
                 result = SearchResult(
-                    title=doc.get('title', [''])[0],
-                    authors=doc.get('author'),
-                    abstract=doc.get('abstract'),
+                    title=doc.get('title', [''])[0] if isinstance(doc.get('title'), list) else doc.get('title', ''),
+                    authors=doc.get('author', []),
+                    abstract=doc.get('abstract', ''),
                     doi=doc.get('doi', [''])[0] if doc.get('doi') else None,
                     year=doc.get('year'),
                     url=f"https://ui.adsabs.harvard.edu/abs/{doc['bibcode']}/abstract",
                     source="ads",
-                    rank=i
+                    rank=i,
+                    citation_count=doc.get('citation_count', 0),
+                    doctype=doctype,
+                    property=property_list
                 )
                 results.append(result)
+                logger.info(f"Processed result {i}: doctype={doctype}, properties={property_list}")
             except Exception as e:
                 logger.error(f"Error processing result {i}: {str(e)}")
                 continue
@@ -1679,438 +1695,164 @@ async def root():
 async def boost_experiment(data: dict):
     """
     Apply configurable boost factors to search results using ADS metadata.
-    
-    This implementation:
-    1. Preserves original scores and rankings
-    2. Fetches metadata for each result from ADS API
-    3. Calculates boosts based on this metadata
-    4. Adds boosts to original scores
-    5. Returns re-ranked results with detailed boost information
     """
     try:
-        logger.info("Starting boost experiment with ADS metadata enrichment")
+        logger.info("Starting boost experiment with data:")
+        logger.info(f"Query: {data.get('query')}")
+        logger.info(f"Number of results: {len(data.get('results', []))}")
+        logger.info(f"Boost config: {data.get('boostConfig')}")
         
         # Get input data
         query = data.get("query", "")
         original_results = data.get("results", [])
         boost_config = data.get("boostConfig", {})
         
-        # Default boost configuration (matching test script)
-        default_boost_config = {
-            "enableCiteBoost": True,
-            "citeBoostWeight": 1.0,
-            "enableRecencyBoost": True,
-            "recencyBoostWeight": 1.0,
-            "recencyFunction": "exponential",
-            "recencyMultiplier": 0.01,
-            "enableDoctypeBoost": True,
-            "doctypeBoostWeight": 1.0,
-            "enableRefereedBoost": True,
-            "refereedBoostWeight": 1.0,
-        }
-        
-        # Merge provided config with defaults
-        for key, value in default_boost_config.items():
-            if key not in boost_config:
-                boost_config[key] = value
-        
         if not original_results:
+            logger.warning("No results provided for boost experiment")
             return {
                 "status": "error",
                 "message": "No results to process"
             }
             
-        logger.info(f"Processing {len(original_results)} results with ADS metadata")
-        
-        # Step 1: Extract bibcodes and preserve original info
-        bibcodes = []
-        original_info = {}  # Store original rank, score, etc.
-        
-        for i, result in enumerate(original_results):
-            # Store original ranking
-            original_rank = i + 1
-            original_score = result.get("score", 1.0)
-            
-            # Get identifier
-            bibcode = result.get("bibcode", "")
-            if not bibcode or bibcode.startswith("10."):  # Looks like a DOI
-                doi = result.get("doi", "") or bibcode
-                if doi:
-                    # Try to get bibcode from DOI
-                    real_bibcode = await get_bibcode_from_doi(doi)
-                    if real_bibcode:
-                        bibcode = real_bibcode
-                        bibcodes.append(bibcode)
-                        logger.info(f"Converted DOI to bibcode: {doi} -> {bibcode}")
-            else:
-                # For results without bibcodes, create placeholder
-                identifier = result.get("doi", "") or result.get("id", "") or f"result-{i}"
-                original_info[identifier] = {
-                    "result": result, 
-                    "rank": original_rank,
-                    "score": original_score
-                }
-                logger.info(f"No bibcode, using identifier: {identifier}")
-        
-        # Step 2: Fetch metadata from ADS API
-        ads_metadata = {}
-        
-        if bibcodes or True:
-            # Get API token
-            ads_token = os.environ.get("ADS_API_KEY")
-            if not ads_token:
-                logger.warning("ADS_API_KEY not found, using limited metadata")
-            else:
-                try:
-                    # Use ADS batch API to get metadata
-                    logger.info(f"Fetching metadata for {len(bibcodes)} records from ADS API")
-                    
-                    # Process in batches to avoid API limits
-                    batch_size = 50
-                    for i in range(0, len(bibcodes), batch_size):
-                        batch = bibcodes[i:i+batch_size]
-                        
-                        # Format query for batch lookup
-                        bibcode_query = "bibcode:(" + " OR ".join(batch) + ")"
-                        
-                        # Make API call
-                        url = "https://api.adsabs.harvard.edu/v1/search/query"
-                        params = {
-                            "q": bibcode_query,
-                            "fl": "bibcode,title,author,year,pubdate,citation_count,doctype,property",
-                            "rows": batch_size
-                        }
-                        headers = {
-                            "Authorization": f"Bearer {ads_token}"
-                        }
-                        
-                        response = requests.get(url, params=params, headers=headers, timeout=30)
-                        
-                        if response.status_code == 200:
-                            data = response.json()
-                            docs = data.get("response", {}).get("docs", [])
-                            
-                            # Store metadata
-                            for doc in docs:
-                                if doc.get("bibcode"):
-                                    ads_metadata[doc["bibcode"]] = doc
-                                    # Log citation data for debugging
-                                    citation_count = doc.get("citation_count", 0)
-                                    # In your boost_experiment function, add this fallback
-                                    # After trying to extract citation_count from metadata
-
-
-                        else:
-                            logger.error(f"ADS API error: {response.status_code} - {response.text}")
-                
-                except Exception as e:
-                    logger.exception(f"Error fetching ADS metadata: {str(e)}")
-        
-        # Step 3: Process each result, apply boosts based on metadata
-        processed_results = []
-        
-        for identifier, info in original_info.items():
-            original_result = info["result"]
-            bibcode = original_result.get("bibcode", "")
-            
-            # Create working copy with original data
-            result_copy = {
-                "originalRank": info["rank"],
-                "originalScore": info["score"]
-            }
-            
-            # Merge original result and ADS metadata
-            if bibcode and bibcode in ads_metadata:
-                # We have ADS metadata, use it
-                metadata = ads_metadata[bibcode]
-                
-                # Extract key fields from metadata
-                title = metadata.get("title", [""])[0] if isinstance(metadata.get("title"), list) else metadata.get("title", "")
-                authors = metadata.get("author", [])
-                
-                # Extract year and pubdate
-                year = metadata.get("year", 0)
-                try:
-                    year = int(year) if year and str(year).isdigit() else 0
-                except (ValueError, TypeError):
-                    year = 0
-                
-                pubdate = metadata.get("pubdate", "")
-                
-                # Extract citation count - with robust extraction
-                citation_count = 0
-                if metadata.get("citation_count") is not None:
-                    try:
-                        citation_count = int(metadata.get("citation_count"))
-                        logger.info(f"Extracted citation_count for {bibcode}: {citation_count}")
-                    except (ValueError, TypeError):
-                        logger.warning(f"Invalid citation_count for {bibcode}: {metadata.get('citation_count')}")
-                
-                # Get doctype
-                doctype = metadata.get("doctype", "").lower()
-                
-                # Get property array - normalize as list
-                property_array = metadata.get("property", [])
-                if isinstance(property_array, str):
-                    property_array = [property_array]
-                
-                # Normalize property array to all uppercase for consistent matching
-                property_array = [p.upper() if isinstance(p, str) else str(p).upper() for p in property_array]
-                
-                # Check for refereed status
-                is_refereed = "REFEREED" in property_array
-                
-                # Create clean result with metadata - with all fields needed by frontend
-                result_copy.update({
-                    "title": title,
-                    "authors": authors,
-                    "year": year,
-                    "pubdate": pubdate,
-                    "citations": citation_count,
-                    "citation_count": citation_count,
-                    "source": original_result.get("source", ""),
-                    "collection": original_result.get("collection", "general"),
-                    "doctype": doctype,
-                    "bibcode": bibcode,
-                    "identifier": bibcode,
-                    "property": property_array,
-                    "refereed": is_refereed,
-                    "score": info["score"],  # Original score
-                    "boostFactors": {},
-                    # Preserve any original fields that might be used by frontend
-                    "display": original_result.get("display", {})
-                })
-                
-                logger.info(f"Using ADS metadata for {bibcode}: {citation_count} citations, {doctype} doctype")
-            else:
-                # No ADS metadata, use original data
-                result_copy.update(original_result)
-                
-                # Ensure we have basic fields with proper defaults
-                if "boostFactors" not in result_copy:
-                    result_copy["boostFactors"] = {}
-                    
-                if "identifier" not in result_copy:
-                    result_copy["identifier"] = identifier
-                
-                if "bibcode" not in result_copy and "identifier" in result_copy:
-                    result_copy["bibcode"] = result_copy["identifier"]
-                    
-                if "property" not in result_copy:
-                    result_copy["property"] = []
-                else:
-                    # Normalize property array if it exists
-                    if isinstance(result_copy["property"], str):
-                        result_copy["property"] = [result_copy["property"]]
-                    result_copy["property"] = [p.upper() if isinstance(p, str) else str(p).upper() 
-                                               for p in result_copy["property"]]
-                
-                # Ensure citation fields exist
-                if "citations" not in result_copy:
-                    result_copy["citations"] = 0
-                if "citation_count" not in result_copy:
-                    result_copy["citation_count"] = result_copy.get("citations", 0)
-                
-                if "doctype" not in result_copy:
-                    result_copy["doctype"] = "article"  # Default
-                    
-                if "year" not in result_copy:
-                    result_copy["year"] = 0
-                
-                if "refereed" not in result_copy:
-                    result_copy["refereed"] = False
-                
-                logger.info(f"Using original data for {identifier} (no ADS metadata) with citations: {result_copy.get('citations', 0)}")
-            
-            # Store for boost processing
-            processed_results.append(result_copy)
-        
-        # Step 4: Apply boosts based on metadata
+        # Process each result to add boost factors
+        boosted_results = []
         current_year = datetime.now().year
-        current_month = datetime.now().month
         
-        for result in processed_results:
-            result_id = result.get("identifier", "unknown")
-            
-            # 1. Citation boost
-            if boost_config.get("enableCiteBoost", True):
-                cite_weight = float(boost_config.get("citeBoostWeight", 1.0))
-                citations = result.get("citations", 0)
-                
-                # Simple citation boost with log scale
-                if citations > 0:
-                    cite_boost = math.log10(1 + citations) * cite_weight / 2
-                    result["boostFactors"]["citeBoost"] = cite_boost
-                    # Add direct access property for easier frontend access
-                    result["citeBoost"] = cite_boost
-                    logger.info(f"Citation boost for {result_id}: {cite_boost:.4f} ({citations} citations)")
-                else:
-                    result["boostFactors"]["citeBoost"] = 0.0
-                    result["citeBoost"] = 0.0
-                    logger.info(f"Citation boost for {result_id}: 0.0 (no citations)")
-            
-            # 2. Recency boost
-            if boost_config.get("enableRecencyBoost", True):
-                recency_weight = float(boost_config.get("recencyBoostWeight", 1.0))
-                recency_function = boost_config.get("recencyFunction", "exponential")
-                pubyear = result.get("year", 0)
-                
-                if pubyear > 0:
-                    # Calculate age in months (approximate)
-                    age_years = current_year - pubyear
-                    age_months = age_years * 12 + current_month
-                    
-                    # Apply exponential decay function
-                    multiplier = float(boost_config.get("recencyMultiplier", 0.01))
-                    recency_boost = math.exp(-multiplier * age_months)
-                    
-                    # Apply weight and normalize
-                    recency_boost = min(recency_boost * recency_weight, 2.0)
-                    result["boostFactors"]["recencyBoost"] = recency_boost
-                    # Add direct access property
-                    result["recencyBoost"] = recency_boost
-                    logger.info(f"Recency boost for {result_id}: {recency_boost:.4f} (age: {age_years} years)")
-                else:
-                    result["boostFactors"]["recencyBoost"] = 0.0
-                    result["recencyBoost"] = 0.0
-                    logger.info(f"Recency boost for {result_id}: 0.0 (no year available)")
-            
-            # 3. Doctype boost
-            if boost_config.get("enableDoctypeBoost", True):
-                doctype_weight = float(boost_config.get("doctypeBoostWeight", 1.0))
-                
-                # Get document type
-                doctype = result.get("doctype", "").lower()
-                
-                # Map to canonical doctype rankings - use detailed ranking system
-                doctype_ranks = {
-                    "article": 1,       # Highest academic value
-                    "book": 2,
-                    "inbook": 2,
-                    "inproceedings": 3,
-                    "phdthesis": 4,
-                    "eprint": 5,
-                    "proceedings": 6,
-                    "mastersthesis": 7,
-                    "techreport": 8,
-                    "catalog": 9,
-                    "software": 10,
-                    "abstract": 11,
-                    "talk": 12,
-                    "bookreview": 13,
-                    "proposal": 14,
-                    "circular": 15,
-                    "newsletter": 16,
-                    "erratum": 17,
-                    "obituary": 18, 
-                    "pressrelease": 19,
-                    "misc": 20,
-                    "": 21              # Unknown type gets lowest rank
+        for idx, result in enumerate(original_results):
+            try:
+                # Initialize boost factors
+                boost_factors = {
+                    "citeBoost": 0.0,
+                    "recencyBoost": 0.0,
+                    "doctypeBoost": 0.0,
+                    "refereedBoost": 0.0
                 }
                 
-                rank = doctype_ranks.get(doctype, 21)
-                # Transform rank to a 0-1 boost factor
-                unique_ranks = len(doctype_ranks)
-                doctype_boost = 1.0 - ((rank - 1) / (unique_ranks - 1))
-                doctype_boost *= doctype_weight
+                # Log the raw result data for debugging
+                logger.info(f"Processing result {idx + 1}:")
+                logger.info(f"Citation count: {result.get('citation_count')}")
+                logger.info(f"Document type: {result.get('doctype')}")
+                logger.info(f"Properties: {result.get('property')}")
                 
-                result["boostFactors"]["doctypeBoost"] = doctype_boost
-                # Add direct access property
-                result["doctypeBoost"] = doctype_boost
-                logger.info(f"Doctype boost for {result_id}: {doctype_boost:.4f} (doctype: {doctype}, rank: {rank})")
-            
-            # 4. Refereed boost
-            if boost_config.get("enableRefereedBoost", True):
-                refereed_weight = float(boost_config.get("refereedBoostWeight", 1.0))
+                # 1. Citation boost
+                if boost_config.get("enableCiteBoost"):
+                    citation_count = result.get("citation_count", 0)
+                    # Handle None citation count
+                    if citation_count is None:
+                        citation_count = 0
+                    # Log transform to handle large variations
+                    boost_factors["citeBoost"] = math.log1p(citation_count) * boost_config.get("citeBoostWeight", 1.0)
+                    logger.info(f"Applied citation boost: {boost_factors['citeBoost']} for {citation_count} citations")
                 
-                # Get refereed status - either from metadata or inferred
-                is_refereed = result.get("refereed", False)
+                # 2. Recency boost
+                if boost_config.get("enableRecencyBoost"):
+                    pub_year = result.get("year")
+                    if pub_year:
+                        age = current_year - pub_year
+                        multiplier = boost_config.get("recencyMultiplier", 0.01)
+                        
+                        if boost_config.get("recencyFunction") == "exponential":
+                            boost_factors["recencyBoost"] = math.exp(-multiplier * age) * boost_config.get("recencyBoostWeight", 1.0)
+                        elif boost_config.get("recencyFunction") == "inverse":
+                            boost_factors["recencyBoost"] = (1 / (1 + multiplier * age)) * boost_config.get("recencyBoostWeight", 1.0)
+                        elif boost_config.get("recencyFunction") == "linear":
+                            boost_factors["recencyBoost"] = max(0, 1 - multiplier * age) * boost_config.get("recencyBoostWeight", 1.0)
+                        elif boost_config.get("recencyFunction") == "sigmoid":
+                            midpoint = boost_config.get("recencyMidpoint", 36)
+                            boost_factors["recencyBoost"] = (1 / (1 + math.exp(multiplier * (age - midpoint)))) * boost_config.get("recencyBoostWeight", 1.0)
+                        
+                        logger.info(f"Applied recency boost: {boost_factors['recencyBoost']} for year {pub_year}")
                 
-                # Determine refereed boost (binary: either full boost or no boost)
-                refereed_boost = refereed_weight if is_refereed else 0.0
+                # 3. Document type boost
+                if boost_config.get("enableDoctypeBoost"):
+                    doctype = result.get("doctype", "")
+                    # Handle None doctype
+                    if doctype is None:
+                        doctype = ""
+                    
+                    # Normalize doctype to lowercase string for comparison
+                    doctype_str = doctype.lower() if isinstance(doctype, str) else ""
+                    
+                    # Weights based on ADS document types
+                    # See: https://ui.adsabs.harvard.edu/help/search/search-syntax
+                    doctype_weights = {
+                        "article": 1.0,       # Standard article
+                        "review": 1.3,        # Review article (highest weight)
+                        "proceedings": 0.8,    # Conference proceedings
+                        "inproceedings": 0.8,  # Conference proceedings
+                        "book": 1.1,          # Book
+                        "eprint": 0.9,        # Preprints
+                        "thesis": 0.7,        # Thesis/dissertation (lower weight)
+                        "": 0.5               # Default/unknown
+                    }
+                    
+                    # Get appropriate weight with fallback to default
+                    weight = doctype_weights.get(doctype_str, 0.5)
+                    boost_factors["doctypeBoost"] = weight * boost_config.get("doctypeBoostWeight", 1.0)
+                    logger.info(f"Applied doctype boost: {boost_factors['doctypeBoost']} for type {doctype_str}")
                 
-                result["boostFactors"]["refereedBoost"] = refereed_boost
-                # Add direct access property
-                result["refereedBoost"] = refereed_boost
-                logger.info(f"Refereed boost for {result_id}: {refereed_boost:.4f}")
-            
-            # 5. Open Access boost
-            if boost_config.get("enableOpenAccessBoost", False):
-                oa_weight = float(boost_config.get("openAccessBoostWeight", 0.2))
-                property_array = result.get("property", [])
+                # 4. Refereed boost
+                if boost_config.get("enableRefereedBoost"):
+                    properties = result.get("property", [])
+                    # Handle None properties
+                    if properties is None:
+                        properties = []
+                    elif isinstance(properties, str):
+                        properties = [properties]
+                        
+                    is_refereed = "REFEREED" in properties
+                    boost_factors["refereedBoost"] = float(is_refereed) * boost_config.get("refereedBoostWeight", 1.0)
+                    logger.info(f"Applied refereed boost: {boost_factors['refereedBoost']} (is_refereed: {is_refereed})")
                 
-                is_oa = False
-                oa_properties = ["OPENACCESS", "PUB_OPENACCESS", "EPRINT_OPENACCESS", 
-                                 "ADS_OPENACCESS", "AUTHOR_OPENACCESS"]
-                for oa_prop in oa_properties:
-                    if oa_prop in property_array:
-                        is_oa = True
-                        break
+                # Calculate final boost based on combination method
+                if boost_config.get("combinationMethod") == "sum":
+                    final_boost = sum(boost_factors.values())
+                elif boost_config.get("combinationMethod") == "product":
+                    final_boost = math.prod([1 + b for b in boost_factors.values()]) - 1
+                else:  # max
+                    final_boost = max(boost_factors.values())
                 
-                oa_boost = oa_weight if is_oa else 0.0
+                # Create boosted result
+                boosted_result = {
+                    **result,  # Keep all original fields
+                    "boostFactors": boost_factors,
+                    "finalBoost": final_boost,
+                    "originalRank": idx + 1
+                }
+                boosted_results.append(boosted_result)
                 
-                if is_oa:
-                    result["boostFactors"]["openAccessBoost"] = oa_boost
-                    # Add direct access property
-                    result["openAccessBoost"] = oa_boost
-                    logger.info(f"Open Access boost for {result_id}: {oa_boost:.4f}")
-            
-            # 6. Combine boosts
-            combination_method = boost_config.get("combinationMethod", "sum")
-            boosts = list(result["boostFactors"].values())
-            
-            if combination_method == "sum":
-                total_boost = sum(boosts)
-            elif combination_method == "product":
-                if boosts:
-                    total_boost = 1.0
-                    for boost in boosts:
-                        total_boost *= (1.0 + boost)
-                    total_boost -= 1.0
-                else:
-                    total_boost = 0.0
-            elif combination_method == "max":
-                total_boost = max(boosts) if boosts else 0.0
-            else:
-                total_boost = sum(boosts)
-            
-            # Apply overall weight
-            total_boost *= float(boost_config.get("overallBoostWeight", 1.0))
-            
-            # Cap maximum boost
-            max_boost = float(boost_config.get("maxBoost", 5.0))
-            total_boost = min(total_boost, max_boost)
-            
-            # Add boost to original score
-            original_score = result.get("originalScore", 1.0)
-            result["score"] = original_score + total_boost
-            result["totalBoost"] = total_boost
-            
-            logger.info(f"Total boost for {result_id}: {total_boost:.4f} (original score: {original_score:.4f}, new score: {result['score']:.4f})")
+                logger.info(f"Final boost: {final_boost}")
+                
+            except Exception as e:
+                logger.error(f"Error processing result {idx}: {str(e)}")
+                # Still add this result to the boosted results, but with minimal boosts
+                boosted_result = {
+                    **result,  # Keep all original fields
+                    "boostFactors": {
+                        "citeBoost": 0.0,
+                        "recencyBoost": 0.0,
+                        "doctypeBoost": 0.0,
+                        "refereedBoost": 0.0
+                    },
+                    "finalBoost": 0.0,
+                    "originalRank": idx + 1
+                }
+                boosted_results.append(boosted_result)
+                continue
         
-        # Step 5: Re-rank results based on new scores
-        ranked_results = sorted(processed_results, key=lambda x: x["score"], reverse=True)
+        # Sort results by final boost score (descending)
+        boosted_results.sort(key=lambda x: x.get("finalBoost", 0), reverse=True)
         
-        # Add new rank and rank change
-        for i, result in enumerate(ranked_results):
-            result["rank"] = i + 1
+        # Add new ranks and calculate rank changes
+        for idx, result in enumerate(boosted_results):
+            result["rank"] = idx + 1
             result["rankChange"] = result["originalRank"] - result["rank"]
         
-        # Step 6: Return results with validation
         return {
             "status": "success",
-            "query": query,
-            "results": ranked_results,
-            "boostConfig": boost_config,
-            "totalResults": len(ranked_results),
-            "metadata": {
-                "avgCitations": sum(r.get("citations", 0) for r in ranked_results) / len(ranked_results) if ranked_results else 0,
-                "maxBoost": max(r.get("totalBoost", 0) for r in ranked_results) if ranked_results else 0,
-                "minBoost": min(r.get("totalBoost", 0) for r in ranked_results) if ranked_results else 0,
-                "avgBoost": sum(r.get("totalBoost", 0) for r in ranked_results) / len(ranked_results) if ranked_results else 0
-            }
+            "results": boosted_results
         }
-    
+        
     except Exception as e:
         logger.exception(f"Error in boost experiment: {str(e)}")
         return {
