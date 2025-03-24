@@ -1739,7 +1739,7 @@ async def boost_experiment(data: dict):
                     # Try to get bibcode from DOI
                     real_bibcode = await get_bibcode_from_doi(doi)
                     if real_bibcode:
-                        bibcode = real_bibcode
+                        bibcodes.append(bibcode)
                         logger.info(f"Converted DOI to bibcode: {doi} -> {bibcode}")
             else:
                 # For results without bibcodes, create placeholder
@@ -1754,7 +1754,7 @@ async def boost_experiment(data: dict):
         # Step 2: Fetch metadata from ADS API
         ads_metadata = {}
         
-        if bibcodes:
+        if bibcodes or True:
             # Get API token
             ads_token = os.environ.get("ADS_API_KEY")
             if not ads_token:
